@@ -1,0 +1,13 @@
+langgraph>=0.6
+langgraph-checkpoint-sqlite>=2.0
+langchain-core>=0.3
+langchain-google-genai>=2.1
+google-cloud-bigquery>=3.27
+sqlglot>=26.0
+pydantic-settings>=2.7
+rich>=13.9
+numpy>=2.1
+
+# Optional providers, install only if you switch LLM_PROVIDER away from "google"
+# langchain-openai>=0.3   # LLM_PROVIDER=openrouter
+# langchain-ollama>=0.2   # LLM_PROVIDER=ollama

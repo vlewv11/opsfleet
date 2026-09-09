@@ -1,0 +1,7 @@
+{
+  "id": "regional-spend-comparison",
+  "question": "Why are customers in state X underspending compared to state Y?",
+  "tags": ["regional", "state comparison", "underspending", "customer behavior", "mix"],
+  "sql": "SELECT u.state, COUNT(DISTINCT u.id) AS customers, ROUND(SUM(oi.sale_price), 2) AS revenue, ROUND(SAFE_DIVIDE(SUM(oi.sale_price), COUNT(DISTINCT u.id)), 2) AS revenue_per_customer, ROUND(SAFE_DIVIDE(COUNT(DISTINCT oi.order_id), COUNT(DISTINCT u.id)), 2) AS orders_per_customer, ROUND(AVG(oi.sale_price), 2) AS avg_item_value FROM `bigquery-public-data.thelook_ecommerce.users` u JOIN `bigquery-public-data.thelook_ecommerce.order_items` oi ON oi.user_id = u.id WHERE oi.status NOT IN ('Cancelled', 'Returned') AND u.state IN ('State X', 'State Y') GROUP BY u.state",
+  "report": "**Finding.** A raw revenue gap between two states is almost always a customer-count artefact. Decomposed, the gap resolved into orders per customer, not average item value.\n\n**Driver.** Decompose revenue into customers x orders per customer x average item value and identify which of the three terms actually moved. Then segment the moving term by category and traffic_source to find the mix shift behind it.\n\n**Recommendation.** Frame regional gaps to managers as 'fewer repeat orders' or 'cheaper basket', never as raw revenue - the raw number is not actionable.\n\n**Convention.** Never compare absolute revenue across regions of different size. Always normalise per customer, and state the customer counts so the manager can judge significance."
+}

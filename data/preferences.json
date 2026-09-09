@@ -1,0 +1,10 @@
+{
+  "manager_a": {
+    "format": "always a markdown table when comparing numbers, minimal prose around it",
+    "depth": "headline plus three supporting bullets, no methodology unless asked"
+  },
+  "manager_b": {
+    "format": "short bullet points, never tables",
+    "depth": "wants the reasoning and the caveats spelled out"
+  }
+}

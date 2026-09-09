@@ -1,0 +1,7 @@
+{
+  "id": "top-customers-by-spend",
+  "question": "Who are our highest-spending customers this year and how much do they buy?",
+  "tags": ["customer behavior", "top customers", "total spend", "revenue"],
+  "sql": "SELECT oi.user_id, COUNT(DISTINCT oi.order_id) AS orders, ROUND(SUM(oi.sale_price), 2) AS revenue, ROUND(AVG(oi.sale_price), 2) AS avg_item_value FROM `bigquery-public-data.thelook_ecommerce.order_items` oi WHERE oi.status NOT IN ('Cancelled', 'Returned') AND oi.created_at >= TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(), YEAR) GROUP BY oi.user_id ORDER BY revenue DESC LIMIT 20",
+  "report": "**Finding.** The top 20 customers contribute roughly 0.4% of revenue individually but share one trait: 4+ orders with above-average item value, i.e. they are repeat buyers trading up, not one-off big baskets.\n\n**Driver.** Repeat frequency, not basket size, separates the top decile. Single-order customers cluster at the category average item value.\n\n**Recommendation.** Target the second decile with a replenishment prompt after order 2 - that is where the frequency curve bends.\n\n**Convention.** Revenue is always SUM(order_items.sale_price) with Cancelled and Returned excluded. Never use orders.num_of_item as a revenue proxy. Customers are identified only by hashed user_id."
+}
