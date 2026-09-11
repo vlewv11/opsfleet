@@ -39,5 +39,6 @@ def read_trace(tid: str) -> list[dict]:
         return [e for line in fh if (e := json.loads(line))["trace"] == tid]
 
 
+logging.getLogger().addHandler(logging.NullHandler())
 logging.getLogger("google.api_core").setLevel(logging.ERROR)
 logging.getLogger("google.auth").setLevel(logging.ERROR)

@@ -4,6 +4,7 @@ from functools import lru_cache
 from google.api_core import exceptions, retry
 from google.cloud import bigquery
 
+from src.tools.bq_runner import BigQueryRunner
 from src.utils.config import settings
 from src.utils.logger import event
 
@@ -24,13 +25,13 @@ class QueryError(RuntimeError):
 
 
 @lru_cache(maxsize=1)
-def client() -> bigquery.Client:
-    return bigquery.Client(project=settings.gcp_project or None, location=settings.bq_location)
+def client() -> BigQueryRunner:
+    return BigQueryRunner(project_id=settings.gcp_project or None, dataset_id=settings.bq_dataset)
 
 
 def dry_run(sql: str) -> int:
     try:
-        job = client().query(
+        job = client().client.query(
             sql, job_config=bigquery.QueryJobConfig(dry_run=True, use_query_cache=False)
         )
     except exceptions.BadRequest as exc:
@@ -45,14 +46,7 @@ def dry_run(sql: str) -> int:
 
 def execute(sql: str) -> tuple[list[str], list[dict], dict]:
     try:
-        job = client().query(
-            sql,
-            job_config=bigquery.QueryJobConfig(
-                maximum_bytes_billed=settings.max_bytes_billed, use_query_cache=True
-            ),
-            retry=_RETRY,
-        )
-        result = job.result(timeout=settings.query_timeout_s, max_results=settings.row_limit)
+        frame, job = _RETRY(client().execute_query_job)(sql)
     except exceptions.BadRequest as exc:
         raise QueryError(exc.message.split("\n\n")[0]) from exc
     except exceptions.Forbidden as exc:
@@ -60,8 +54,8 @@ def execute(sql: str) -> tuple[list[str], list[dict], dict]:
     except (exceptions.GoogleAPIError, TimeoutError) as exc:
         raise QueryError(f"BigQuery is unavailable right now: {exc}") from exc
 
-    columns = [field.name for field in result.schema]
-    rows = [dict(zip(columns, row.values())) for row in result]
+    columns = [str(name) for name in frame.columns]
+    rows = frame.to_dict("records")
     meta = {
         "job_id": job.job_id,
         "gb_scanned": round((job.total_bytes_processed or 0) / 1e9, 3),
@@ -75,14 +69,10 @@ def execute(sql: str) -> tuple[list[str], list[dict], dict]:
 def schema() -> dict[str, dict[str, str]]:
     if _CACHE.exists():
         return json.loads(_CACHE.read_text())
-    names = ", ".join(f"'{t}'" for t in TABLES)
-    _, rows, _ = execute(
-        f"SELECT table_name, column_name, data_type "
-        f"FROM `{settings.bq_dataset}.INFORMATION_SCHEMA.COLUMNS` "
-        f"WHERE table_name IN ({names}) LIMIT {settings.row_limit}"
-    )
-    out: dict[str, dict[str, str]] = {}
-    for row in rows:
-        out.setdefault(row["table_name"], {})[row["column_name"]] = row["data_type"]
+    runner = client()
+    out = {
+        table: {field["name"]: field["type"] for field in runner.get_table_schema(table)}
+        for table in TABLES
+    }
     _CACHE.write_text(json.dumps(out, indent=2))
     return out

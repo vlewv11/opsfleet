@@ -8,14 +8,8 @@ ROOT = Path(__file__).resolve().parents[2]
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT / ".env", extra="ignore")
 
-    llm_provider: str = "google"
-    google_api_key: str = ""
     openrouter_api_key: str = ""
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    ollama_base_url: str = "http://localhost:11434"
-
-    reasoning_model: str = "gemini-2.5-pro"
-    fast_model: str = "gemini-2.5-flash"
+    google_api_key: str = ""
     embedding_model: str = "models/gemini-embedding-001"
 
     gcp_project: str = ""

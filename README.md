@@ -27,7 +27,7 @@ language. Built on **LangGraph** + **Gemini 2.5** over `bigquery-public-data.the
 
 ## Setup
 
-Requires Python 3.11+ (developed and tested on 3.14), a Google AI Studio key, and BigQuery access.
+Requires Python 3.11+ (developed and tested on 3.14), an OpenRouter key, and BigQuery access.
 
 ```bash
 git clone <your-repo-url> && cd opsfleet
@@ -35,14 +35,20 @@ git clone <your-repo-url> && cd opsfleet
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-cp .env.example .env      # then set GOOGLE_API_KEY and GCP_PROJECT
+cp .env.example .env      # then set OPENROUTER_API_KEY and GCP_PROJECT
 ```
 
-**1. LLM key** — free from [Google AI Studio](https://aistudio.google.com/apikey). Put it in `.env`:
+**1. LLM key** — from [OpenRouter](https://openrouter.ai/keys). Put it in `.env`:
 
 ```bash
-GOOGLE_API_KEY=AIza...
+OPENROUTER_API_KEY=sk-or-v1-...
 ```
+
+The provider, model and generation parameters live in `configs/reasoning.yaml` (deep analysis) and
+`configs/fast.yaml` (guard checks and SQL repair), validated and loaded by the `UnifiedLLMClient` in
+`src/models/llm_client.py`, adapted from
+[Opsfleet/lc-openrouter-ollama-client](https://github.com/Opsfleet/lc-openrouter-ollama-client).
+To run locally instead, set `platform: ollama` in both files and `pip install langchain-ollama`.
 
 **2. BigQuery access** — the dataset is public, but queries bill to *your* project (free tier covers
 1 TB/month; this agent caps every query at 2 GB).
@@ -63,12 +69,11 @@ python main.py --user manager_b   # a manager with different stored preferences
 
 Startup preflights both credentials and tells you exactly what is missing before the prompt opens.
 
-### Other model providers
+### Optional: vector retrieval for the Golden Bucket
 
-```bash
-LLM_PROVIDER=openrouter   # pip install langchain-openai ; set OPENROUTER_API_KEY
-LLM_PROVIDER=ollama       # pip install langchain-ollama ; set OLLAMA_BASE_URL
-```
+Precedent search runs on lexical scoring out of the box. Set `GOOGLE_API_KEY` (free from
+[Google AI Studio](https://aistudio.google.com/apikey)) to enable Gemini embeddings and hybrid
+ranking; OpenRouter serves no embedding models, so this is the one thing it cannot cover.
 
 ### Tests
 

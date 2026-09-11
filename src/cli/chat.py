@@ -10,7 +10,7 @@ from rich.table import Table
 
 from src.agent import memory
 from src.agent.agent import build
-from src.models.llm_client import get_llm
+from src.models.llm_client import client as llm_client, get_llm
 from src.tools import reports
 from src.tools.bigquery import client as bq_client
 from src.utils.config import settings
@@ -35,7 +35,8 @@ def run(user: str = "manager_a") -> None:
         Panel.fit(
             f"[bold]Retail Analytics Assistant[/bold]\n"
             f"dataset [cyan]{settings.bq_dataset}[/cyan]  ·  model "
-            f"[cyan]{settings.reasoning_model}[/cyan] via [cyan]{settings.llm_provider}[/cyan]\n"
+            f"[cyan]{llm_client(False).config.model.name}[/cyan] via "
+            f"[cyan]{llm_client(False).config.platform}[/cyan]\n"
             f"[dim]/help for commands[/dim]",
             border_style="cyan",
         )

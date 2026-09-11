@@ -11,7 +11,7 @@ _TOKEN = re.compile(r"[a-z0-9_]+")
 
 @lru_cache(maxsize=1)
 def _backend():
-    if settings.llm_provider.lower() != "google" or not settings.google_api_key:
+    if not settings.google_api_key:
         return None
     from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
