@@ -1,8 +1,9 @@
 import pytest
 
+from src.utils.config import settings
 from src.utils.pii import PolicyError, enforce, scrub
 
-D = "`bigquery-public-data.thelook_ecommerce"
+D = f"`{settings.bq_dataset}"
 
 
 @pytest.mark.parametrize(

@@ -54,7 +54,7 @@ def render(hits: list[dict]) -> str:
     return "\n\n---\n\n".join(
         f"### Precedent: {h['id']} (similarity {h['score']})\n"
         f"**Analyst was asked:** {h['question']}\n"
-        f"**Analyst's SQL:**\n```sql\n{h['sql']}\n```\n"
+        f"**Analyst's SQL:**\n```sql\n{h['sql'].replace('{dataset}', settings.bq_dataset)}\n```\n"
         f"**Analyst's interpretation and house conventions:**\n{h['report']}"
         for h in hits
     )

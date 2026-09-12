@@ -13,3 +13,6 @@ logs/*.jsonl
 # Root-level JSON only, so data/knowledge_base/*.json and data/schema.json stay tracked.
 /*.json
 credentials/
+
+# generated warehouse seed — reproduce with scripts/generate_dataset.py
+data/warehouse/*.ndjson

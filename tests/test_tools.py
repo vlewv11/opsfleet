@@ -8,7 +8,7 @@ from src.tools import golden, reports
 from src.tools.bigquery import QueryError
 from src.utils.config import settings
 
-GOOD = "SELECT state FROM `bigquery-public-data.thelook_ecommerce.users` LIMIT 5"
+GOOD = f"SELECT state FROM `{settings.bq_dataset}.users` LIMIT 5"
 
 
 @pytest.fixture
@@ -57,7 +57,7 @@ def test_empty_result_is_reported_not_retried(stub_bq, monkeypatch):
 
 def test_policy_violation_feeds_the_repair_loop(stub_bq, monkeypatch):
     monkeypatch.setattr(ex, "dry_run", lambda sql: 10)
-    result = json.loads(ex.run_sql("SELECT email FROM `bigquery-public-data.thelook_ecommerce.users`"))
+    result = json.loads(ex.run_sql(f"SELECT email FROM `{settings.bq_dataset}.users`"))
     assert result["status"] == "ok" and stub_bq["repair"] == 1
 
 

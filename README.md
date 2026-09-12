@@ -104,6 +104,42 @@ Precedent search runs on lexical scoring out of the box. Set `GOOGLE_API_KEY` (f
 [Google AI Studio](https://aistudio.google.com/apikey)) to enable Gemini embeddings and hybrid
 ranking; OpenRouter serves no embedding models, so this is the one thing it cannot cover.
 
+### Optional: your own dataset instead of the public one
+
+`scripts/generate_dataset.py` generates a synthetic warehouse with **exactly** the
+`thelook_ecommerce` column names and types, so the policy engine, the Golden Bucket SQL and every
+demo question keep working unchanged.
+
+```bash
+python scripts/generate_dataset.py            # --users / --products / --seed
+python scripts/load_to_bq.py --credentials writer-key.json
+```
+
+The loader uses the project's own venv, so no `gcloud`/`bq` CLI is needed. The runtime key in `.env`
+is deliberately read-only and **cannot** create a dataset, so pass `--credentials` pointing at a key
+with `roles/bigquery.dataEditor` for this one-time load. On success it rewrites `BQ_DATASET` in
+`.env` and clears the cached `data/schema.json`.
+
+`BQ_DATASET` is the only setting that changes, because `src/utils/pii.py` derives its allow-list
+from it — `retail_demo.users` is then accepted, `id` is still SHA-256 hashed and `email` is still
+blocked, with no code edit.
+
+It is ~12 MB across 8,000 customers, 1,200 products, 13,500 orders and 21,000 line items, seeded
+(`--seed 42`) so it regenerates identically. The window ends at *today*, so the current month is
+deliberately partial. Business signal is planted rather than uniform noise, so the "why" questions
+have real answers:
+
+| signal | what the data says |
+|---|---|
+| Texas vs California | TX has ~40% fewer customers and a lower repeat rate (63% vs 70%), but a **higher** basket — it over-indexes 20% vs 5% in Outerwear |
+| Return-rate spike | one month ~4 months back jumps to **36%** returns against a ~10% baseline, concentrated in Outerwear, Sweaters and Blazers |
+| Revenue trend | grows over the window, with a visible dip in the spike month |
+| Status mix | Shipped 29% / Complete 24% / Processing 20% / Cancelled 16% / Returned 11% — within a point of real thelook |
+
+The `.ndjson` files are gitignored; the generator is the reproducible artefact. PII columns
+(`email`, `street_address`, `postal_code`, `latitude`, `longitude`, `user_geom`) are populated, so
+the masking demo is exercised against real-looking values.
+
 ### Tests
 
 ```bash
@@ -268,6 +304,8 @@ Honest accounting of what has been executed:
 | ✅ Live end-to-end run | "top 3 categories by revenue" → Gemini 3.8 Flash over OpenRouter → `query_data` → live BigQuery → answer |
 | ✅ Live multi-step "why" run | "why are Texas customers underspending vs California" → 3 chained queries (spend → funnel → traffic source) → premise corrected, driver named, action proposed |
 | ✅ Golden Bucket applied to live SQL | unprompted, the agent added `WHERE NOT oi.status IN ('Cancelled','Returned')` — the house revenue convention carried by the trios, not by the schema |
+| ✅ Runs on either dataset | the full suite and the agent pass against both `bigquery-public-data.thelook_ecommerce` and a private `retail_demo` copy; `BQ_DATASET` is the only thing that changes |
+| ✅ Planted-signal recall | against the generated warehouse, "did our return rate spike?" recovered the injected anomaly — 35.91% in May 2026 vs an 11.12% trailing baseline, normalising to 8.84% in June — across 12 chained queries |
 
 ---
 
