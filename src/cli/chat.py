@@ -1,8 +1,11 @@
 import json
+import re
+import sys
 import uuid
 
 from google.auth.exceptions import DefaultCredentialsError
 from langchain_core.messages import HumanMessage
+from langgraph.types import Command
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -14,7 +17,7 @@ from src.agent.llm_client import PLATFORM, client as llm_client, get_llm
 from src.tools import reports
 from src.tools.bigquery import client as bq_client
 from src.utils.config import settings
-from src.utils.logger import new_trace, read_trace
+from src.utils.logger import event, new_trace, read_trace
 
 HELP = """
 [bold]Ask anything about sales, customers, products or inventory.[/bold]
@@ -53,6 +56,8 @@ def run(user: str = "manager_a") -> None:
         except (EOFError, KeyboardInterrupt):
             console.print("\n[dim]Bye.[/dim]")
             return
+        if not sys.stdin.isatty():
+            console.print(text)
         if not text:
             continue
 
@@ -87,30 +92,44 @@ def run(user: str = "manager_a") -> None:
 
         last_trace = new_trace()
         memory.active_user.set(user)
+        memory.active_thread.set(thread)
         config = {"configurable": {"thread_id": f"{user}:{thread}"}, "recursion_limit": 60}
-        state = {
+        payload = {
             "messages": [HumanMessage(text)],
             "user_id": user,
             "steps": 0,
             "exhausted": False,
         }
 
-        with console.status("[dim]thinking[/dim]", spinner="dots") as status:
-            try:
-                for update in graph.stream(state, config, stream_mode="updates"):
-                    for node, payload in update.items():
-                        for message in (payload or {}).get("messages", []) or []:
-                            for call in getattr(message, "tool_calls", None) or []:
-                                status.update(f"[dim]{call['name']}[/dim]")
-                                console.print(f"[dim]  → {call['name']} {_brief(call['args'])}[/dim]")
-                            if message.type == "tool":
-                                console.print(f"[dim]  ← {_outcome(str(message.text))}[/dim]")
-            except Exception as exc:
-                console.print(f"[red]The assistant hit an unrecoverable error:[/red] {exc}")
-                console.print(f"[dim]trace {last_trace}[/dim]")
-                continue
+        failed = False
+        while True:
+            with console.status("[dim]thinking[/dim]", spinner="dots") as status:
+                try:
+                    for update in graph.stream(payload, config, stream_mode="updates"):
+                        for node, node_payload in update.items():
+                            if not isinstance(node_payload, dict):
+                                continue
+                            for message in node_payload.get("messages", []) or []:
+                                for call in getattr(message, "tool_calls", None) or []:
+                                    status.update(f"[dim]{call['name']}[/dim]")
+                                    console.print(f"  → {call['name']} {_brief(call['args'])}", style="dim", markup=False)
+                                if message.type == "tool":
+                                    console.print(f"  ← {_outcome(str(message.text))}", style="dim", markup=False)
+                except Exception as exc:
+                    console.print(f"[red]The assistant hit an unrecoverable error:[/red] {exc}")
+                    console.print(f"[dim]trace {last_trace}[/dim]")
+                    failed = True
+                    break
+
+            pending = graph.get_state(config).interrupts
+            if not pending:
+                break
+            payload = Command(resume=_confirm(console, pending[0].value))
+        if failed:
+            continue
 
         final = graph.get_state(config).values["messages"][-1]
+        event("answer", text=str(final.text))
         console.print()
         console.print(Markdown(str(final.text)))
         console.print(f"[dim]trace {last_trace}[/dim]")
@@ -135,15 +154,40 @@ def preflight() -> str:
     return ""
 
 
+def _confirm(console: Console, request: dict) -> str:
+    records = request["reports"]
+    table = Table("id", "created", "title", box=None, header_style="dim")
+    for record in records:
+        table.add_row(record["id"], record["created_at"][:10], record["title"])
+    console.print()
+    console.print(
+        Panel(
+            table,
+            title=f"[yellow]Confirm deletion of {len(records)} report(s)[/yellow]",
+            border_style="yellow",
+        )
+    )
+    for record in records:
+        console.print(f"  {record['id']}  {record['preview']}", style="dim", markup=False)
+    answer = console.input("\n[bold yellow]delete these? (yes/no)[/bold yellow] ").strip()
+    if not sys.stdin.isatty():
+        console.print(answer)
+    return answer
+
+
 def _brief(args: dict) -> str:
     return json.dumps(args, default=str)[:110].replace("\n", " ")
 
 
 def _outcome(payload: str) -> str:
+    if hits := re.findall(r"### Precedent: (\S+) \(similarity ([\d.]+)\)", payload):
+        return ", ".join(f"{name} ({score})" for name, score in hits)
     try:
         parsed = json.loads(payload)
     except ValueError:
         return payload[:110].replace("\n", " ")
+    if tables := parsed.get("dataset_schema"):
+        return f"{len(tables)} tables, {sum(len(c) for c in tables.values())} columns"
     if parsed.get("status") == "ok":
         return f"{parsed['row_count']} rows, {parsed['repairs']} repair(s)"
     return f"{parsed.get('status', 'done')}: {str(parsed.get('last_error') or parsed.get('guidance', ''))[:90]}"

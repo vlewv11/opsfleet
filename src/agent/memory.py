@@ -34,3 +34,4 @@ def remember(user_id: str, key: str, value: str) -> dict:
 
 
 active_user: ContextVar[str] = ContextVar("active_user", default="manager")
+active_thread: ContextVar[str] = ContextVar("active_thread", default="-")
