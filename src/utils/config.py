@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,6 +14,8 @@ class Settings(BaseSettings):
     embedding_model: str = "models/gemini-embedding-001"
 
     gcp_project: str = ""
+    google_application_credentials: str = ""
+    google_credentials_b64: str = ""
     bq_location: str = "US"
     bq_dataset: str = "bigquery-public-data.thelook_ecommerce"
     max_bytes_billed: int = 2_000_000_000
@@ -29,3 +32,7 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+if settings.google_application_credentials:
+    _key = Path(settings.google_application_credentials).expanduser()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(_key if _key.is_absolute() else ROOT / _key)

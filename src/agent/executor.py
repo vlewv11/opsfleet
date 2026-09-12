@@ -4,7 +4,7 @@ import time
 
 from langchain_core.messages import HumanMessage
 
-from src.models.llm_client import get_llm
+from src.agent.llm_client import get_llm
 from src.prompts.agent_prompts import REPAIR
 from src.tools.bigquery import QueryError, dry_run, execute, schema
 from src.utils.config import settings

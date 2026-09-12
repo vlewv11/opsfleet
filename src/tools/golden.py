@@ -4,7 +4,7 @@ from functools import lru_cache
 
 import numpy as np
 
-from src.models.embeddings import embed, lexical_scores
+from src.agent.embeddings import embed, lexical_scores
 from src.utils.config import settings
 from src.utils.logger import event
 

@@ -8,3 +8,8 @@ data/reports/*.json
 data/knowledge_base/.index.npz
 logs/*.jsonl
 .DS_Store
+
+# GCP service-account keys — never commit.
+# Root-level JSON only, so data/knowledge_base/*.json and data/schema.json stay tracked.
+/*.json
+credentials/

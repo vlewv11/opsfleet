@@ -7,16 +7,18 @@ from google.cloud import bigquery
 class BigQueryRunner:
     """A lean BigQuery client for executing SQL queries and returning DataFrame results."""
 
-    def __init__(self, project_id: Optional[str] = None, dataset_id: Optional[str] = "bigquery-public-data.thelook_ecommerce") -> None:
+    def __init__(self, project_id: Optional[str] = None, dataset_id: Optional[str] = "bigquery-public-data.thelook_ecommerce", credentials: Optional[Any] = None) -> None:
         """Initialize BigQuery client.
 
         Args:
             project_id: Google Cloud project ID. If None, uses default credentials.
             dataset_id: BigQuery dataset ID. If None, uses default dataset.
+            credentials: Explicit credentials object. If None, Application Default
+                Credentials are discovered from the environment.
         """
         logging.info("Initializing BigQuery client")
         try:
-            self.client = bigquery.Client(project=project_id)
+            self.client = bigquery.Client(project=project_id, credentials=credentials)
             self.dataset_id = dataset_id
             logging.info(f"BigQuery client initialized for dataset: {self.dataset_id}")
         except Exception as e:

@@ -1,8 +1,10 @@
+import base64
 import json
 from functools import lru_cache
 
 from google.api_core import exceptions, retry
 from google.cloud import bigquery
+from google.oauth2 import service_account
 
 from src.tools.bq_runner import BigQueryRunner
 from src.utils.config import settings
@@ -26,7 +28,14 @@ class QueryError(RuntimeError):
 
 @lru_cache(maxsize=1)
 def client() -> BigQueryRunner:
-    return BigQueryRunner(project_id=settings.gcp_project or None, dataset_id=settings.bq_dataset)
+    credentials, project = None, settings.gcp_project or None
+    if settings.google_credentials_b64:
+        info = json.loads(base64.b64decode(settings.google_credentials_b64))
+        credentials = service_account.Credentials.from_service_account_info(info)
+        project = project or info["project_id"]
+    return BigQueryRunner(
+        project_id=project, dataset_id=settings.bq_dataset, credentials=credentials
+    )
 
 
 def dry_run(sql: str) -> int:

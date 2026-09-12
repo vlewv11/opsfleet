@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from src.agent.memory import checkpointer
 from src.agent.state import AgentState
-from src.models.llm_client import get_llm
+from src.agent.llm_client import get_llm
 from src.prompts import agent_prompts, system_prompts
 from src.tools import golden
 from src.tools.registry import TOOLS

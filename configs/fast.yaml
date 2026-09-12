@@ -1,11 +1,7 @@
 llm:
-  platform: openrouter
-  model:
-    name: "google/gemini-2.5-flash"
-  parameters:
-    temperature: 0
-    max_tokens: 4000
-    top_p: 0.5
-  openrouter:
-    timeout: 60
-    max_retries: 4
+  model: "google/gemini-2.5-flash"
+  temperature: 0
+  max_tokens: 4000
+  top_p: 0.5
+  timeout: 60
+  max_retries: 4

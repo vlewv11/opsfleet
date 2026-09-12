@@ -27,7 +27,7 @@ language. Built on **LangGraph** + **Gemini 2.5** over `bigquery-public-data.the
 
 ## Setup
 
-Requires Python 3.11+ (developed and tested on 3.14), an OpenRouter key, and BigQuery access.
+Requires Python 3.11+ (developed and tested on 3.12), an OpenRouter key, and BigQuery access.
 
 ```bash
 git clone <your-repo-url> && cd opsfleet
@@ -44,11 +44,11 @@ cp .env.example .env      # then set OPENROUTER_API_KEY and GCP_PROJECT
 OPENROUTER_API_KEY=sk-or-v1-...
 ```
 
-The provider, model and generation parameters live in `configs/reasoning.yaml` (deep analysis) and
+The model and generation parameters live in `configs/reasoning.yaml` (deep analysis) and
 `configs/fast.yaml` (guard checks and SQL repair), validated and loaded by the `UnifiedLLMClient` in
-`src/models/llm_client.py`, adapted from
-[Opsfleet/lc-openrouter-ollama-client](https://github.com/Opsfleet/lc-openrouter-ollama-client).
-To run locally instead, set `platform: ollama` in both files and `pip install langchain-ollama`.
+`src/agent/llm_client.py`, adapted from
+[Opsfleet/lc-openrouter-ollama-client](https://github.com/Opsfleet/lc-openrouter-ollama-client) and
+narrowed to OpenRouter, which is the only chat provider this project targets.
 
 **2. BigQuery access** — the dataset is public, but queries bill to *your* project (free tier covers
 1 TB/month; this agent caps every query at 2 GB).
@@ -57,8 +57,26 @@ To run locally instead, set `platform: ollama` in both files and `pip install la
 gcloud auth application-default login
 ```
 
-Then set `GCP_PROJECT=your-project-id` in `.env`. A service-account key works too — point
-`GOOGLE_APPLICATION_CREDENTIALS` at the JSON file.
+Then set `GCP_PROJECT=your-project-id` in `.env`. A service-account key works too, either as a
+file path or inlined so that `.env` is the only artefact you need to carry:
+
+```bash
+# path — absolute, ~/..., or relative to the project root
+GOOGLE_APPLICATION_CREDENTIALS=key.json
+
+# or inline the whole key on one line, and keep no JSON file at all
+base64 -i key.json | tr -d '\n'      # paste into GOOGLE_CREDENTIALS_B64
+```
+
+`GOOGLE_CREDENTIALS_B64` wins if both are set. Base64 is transport encoding, **not** encryption —
+`.env` is gitignored and should be treated as a secret either way.
+
+The key needs **`roles/bigquery.jobUser`** on your own project. Read access to the public dataset is
+not enough on its own: every query — even a dry run — creates a job that must be billed somewhere,
+so a key holding only `bigquery.dataViewer` fails with `bigquery.jobs.create` denied.
+
+Also change `PII_SALT` from its default. It is the salt for the SHA-256 customer-id hashing, so
+leaving it at `change-me-in-production` makes those pseudonyms guessable.
 
 **3. Run**
 
@@ -188,16 +206,16 @@ opsfleet/
 │   ├── agent/
 │   │   ├── agent.py            LangGraph: guard → retrieve → llm ⇄ tools → redact
 │   │   ├── executor.py         self-correcting SQL loop (validate → dry run → repair)
+│   │   ├── llm_client.py       UnifiedLLMClient — Gemini via OpenRouter
+│   │   ├── embeddings.py       Gemini embeddings + lexical fallback
 │   │   ├── state.py            graph state
 │   │   └── memory.py           checkpointer + per-user preferences
 │   ├── tools/
 │   │   ├── registry.py         the five agent tools
 │   │   ├── bigquery.py         client, dry run, retries, schema cache
+│   │   ├── bq_runner.py        the assignment's BigQueryRunner, as provided
 │   │   ├── golden.py           Golden Bucket hybrid retrieval
 │   │   └── reports.py          saved-reports library
-│   ├── models/
-│   │   ├── llm_client.py       provider factory (Gemini / OpenRouter / Ollama)
-│   │   └── embeddings.py       embeddings + lexical fallback
 │   ├── prompts/
 │   │   ├── system_prompts.py   composed per turn — persona, schema, prefs, precedents
 │   │   └── agent_prompts.py    guard and repair prompts
@@ -219,7 +237,9 @@ opsfleet/
 
 The layout follows the requested template, with two adaptations: `api/` is replaced by `cli/`
 because the deliverable is a CLI, and tool modules are named for what they do here (BigQuery,
-Golden Bucket, reports) rather than the template's placeholders.
+Golden Bucket, reports) rather than the template's placeholders. Everything the agent reasons
+*with* — the chat client, the embedding model, memory, state, the graph — lives under `src/agent/`;
+`src/tools/` holds only what the agent reasons *about*.
 
 ---
 
@@ -230,21 +250,17 @@ Honest accounting of what has been executed:
 | | |
 |---|---|
 | ✅ 28 tests pass | policy engine, graph routing, tool loop, budget termination, redaction, outage degradation, repair-loop bounds |
-| ✅ Dependencies install clean | Python 3.14, `pip install -r requirements.txt` |
+| ✅ Dependencies install clean | Python 3.12, `pip install -r requirements.txt` |
 | ✅ CLI runs | including both preflight failure paths |
 | ✅ Every Golden Bucket trio's SQL validated | against the live policy engine |
-| ⚠️ Not executed against live BigQuery | no GCP credentials were available on the development machine, so no query has been run against the real dataset and no live Gemini call has been made |
-
-The BigQuery integration is exercised in tests through stubbed client responses; the SQL sent to it
-is validated by the same policy engine that runs in production, and every query in
-`data/knowledge_base/` is real BigQuery syntax. On a machine with credentials, `python main.py`
-should work as described — but that last mile is unverified and you should treat it as such.
+| ✅ Live BigQuery execution | `SELECT id, state, age FROM users LIMIT 3` ran end-to-end through the executor against the real dataset; `id` came back SHA-256 hashed, confirming the policy engine rewrites the AST before execution rather than filtering afterwards |
+| ✅ Live end-to-end run | "top 3 categories by revenue" → Gemini 2.5 Pro over OpenRouter → `query_data` → live BigQuery → answer |
+| ✅ Golden Bucket applied to live SQL | unprompted, the agent added `WHERE NOT oi.status IN ('Cancelled','Returned')` — the house revenue convention carried by the trios, not by the schema |
 
 ---
 
 ## Known limitations
 
-- **No live-run verification** — see above.
 - **High-Stakes Oversight is designed, not built.** The task asked for at least two of the five
   prototype requirements; the two implemented are Safety & PII Masking and Resilience. Reports can
   be created and listed but not deleted, so the confirmation flow has nothing to guard yet. The

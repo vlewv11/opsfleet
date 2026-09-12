@@ -10,7 +10,7 @@ from rich.table import Table
 
 from src.agent import memory
 from src.agent.agent import build
-from src.models.llm_client import client as llm_client, get_llm
+from src.agent.llm_client import PLATFORM, client as llm_client, get_llm
 from src.tools import reports
 from src.tools.bigquery import client as bq_client
 from src.utils.config import settings
@@ -31,19 +31,18 @@ HELP = """
 
 def run(user: str = "manager_a") -> None:
     console = Console()
+    if problem := preflight():
+        console.print(Panel(problem, title="[red]Setup incomplete[/red]", border_style="red"))
+        return
     console.print(
         Panel.fit(
             f"[bold]Retail Analytics Assistant[/bold]\n"
             f"dataset [cyan]{settings.bq_dataset}[/cyan]  ·  model "
-            f"[cyan]{llm_client(False).config.model.name}[/cyan] via "
-            f"[cyan]{llm_client(False).config.platform}[/cyan]\n"
+            f"[cyan]{llm_client(False).config.model}[/cyan] via [cyan]{PLATFORM}[/cyan]\n"
             f"[dim]/help for commands[/dim]",
             border_style="cyan",
         )
     )
-    if problem := preflight():
-        console.print(Panel(problem, title="[red]Setup incomplete[/red]", border_style="red"))
-        return
 
     graph = build()
     thread, last_trace = uuid.uuid4().hex[:8], None
