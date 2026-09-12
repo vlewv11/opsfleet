@@ -144,8 +144,29 @@ the masking demo is exercised against real-looking values.
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests/ -q          # 28 tests, no API key or network required
+
+python -m pytest tests/ -q                  # 28 offline tests, no API key or network
+python -m pytest tests/ -m integration -q   # 11 live BigQuery tests
 ```
+
+The offline suite stubs BigQuery out, so it runs anywhere in under a second and is what CI should
+gate on. The integration suite is deselected by default (`pytest.ini`) and exercises the service
+layer in `src/tools/bigquery.py` that stubs cannot reach:
+
+| it proves | how |
+|---|---|
+| credentials authenticate against the right project | `client()` identity and dataset |
+| the schema reader sees all four tables | live `get_table_schema` |
+| dry runs estimate bytes without executing | `dry_run` returns > 0 |
+| the cost cap actually fires | `max_bytes_billed` lowered to 1 byte → `QueryError` |
+| BigQuery errors are mapped, not leaked | syntax and unknown-column errors become `QueryError`, first line only |
+| observability metadata is real | `job_id`, `gb_scanned`, `cache_hit` come back populated |
+| PII never reaches BigQuery | blocked columns raise before the query is sent |
+| identifiers come back hashed from live rows | 12-char digests, not integers |
+| empty results are reported, not retried | impossible filter → `status: empty`, 0 repairs |
+| the row cap holds against live data | `LIMIT 100000` clamped to `ROW_LIMIT` |
+
+Both suites pass against `bigquery-public-data.thelook_ecommerce` and a private `retail_demo` copy.
 
 ---
 
@@ -305,6 +326,7 @@ Honest accounting of what has been executed:
 | ✅ Live multi-step "why" run | "why are Texas customers underspending vs California" → 3 chained queries (spend → funnel → traffic source) → premise corrected, driver named, action proposed |
 | ✅ Golden Bucket applied to live SQL | unprompted, the agent added `WHERE NOT oi.status IN ('Cancelled','Returned')` — the house revenue convention carried by the trios, not by the schema |
 | ✅ Runs on either dataset | the full suite and the agent pass against both `bigquery-public-data.thelook_ecommerce` and a private `retail_demo` copy; `BQ_DATASET` is the only thing that changes |
+| ✅ Null-safe result marshalling | rows are read straight from the BigQuery iterator, so NULL timestamps reach the model as JSON `null`; the previous DataFrame round-trip emitted `"NaT"` strings and bare `NaN` tokens |
 | ✅ Planted-signal recall | against the generated warehouse, "did our return rate spike?" recovered the injected anomaly — 35.91% in May 2026 vs an 11.12% trailing baseline, normalising to 8.84% in June — across 12 chained queries |
 
 ---

@@ -47,25 +47,30 @@ class BigQueryRunner:
             logging.error(f"BigQuery execution failed: {str(e)}")
             raise
 
-    def execute_query_job(self, sql_query: str) -> tuple[pd.DataFrame, bigquery.QueryJob]:
-        """Execute a SQL query and return both the DataFrame and the completed job.
+    def execute_query_rows(self, sql_query: str) -> tuple[List[str], List[Dict[str, Any]], bigquery.QueryJob]:
+        """Execute a SQL query and return column names, row dicts and the completed job.
+
+        Materialises rows straight from the result iterator rather than via a DataFrame,
+        which avoids a full copy of the result set and preserves BigQuery's native types.
 
         Args:
             sql_query: The SQL query to execute.
 
         Returns:
-            Tuple of the result DataFrame and the QueryJob, whose metadata carries
-            job_id, total_bytes_processed and cache_hit for observability.
+            Tuple of the column names in schema order, the rows as dictionaries, and the
+            QueryJob, whose metadata carries job_id, total_bytes_processed and cache_hit.
 
         Raises:
             Exception: If query execution fails.
         """
         try:
-            logging.info(f"Executing BigQuery query")
+            logging.info("Executing BigQuery query")
             query_job = self.client.query(sql_query)
-            df = query_job.result().to_dataframe()
-            logging.info(f"Query completed successfully, returned {len(df)} rows")
-            return df, query_job
+            result = query_job.result()
+            columns = [field.name for field in result.schema]
+            rows = [dict(row) for row in result]
+            logging.info(f"Query completed successfully, returned {len(rows)} rows")
+            return columns, rows, query_job
         except Exception as e:
             logging.error(f"BigQuery execution failed: {str(e)}")
             raise

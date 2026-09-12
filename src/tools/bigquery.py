@@ -55,7 +55,7 @@ def dry_run(sql: str) -> int:
 
 def execute(sql: str) -> tuple[list[str], list[dict], dict]:
     try:
-        frame, job = _RETRY(client().execute_query_job)(sql)
+        columns, rows, job = _RETRY(client().execute_query_rows)(sql)
     except exceptions.BadRequest as exc:
         raise QueryError(exc.message.split("\n\n")[0]) from exc
     except exceptions.Forbidden as exc:
@@ -63,8 +63,6 @@ def execute(sql: str) -> tuple[list[str], list[dict], dict]:
     except (exceptions.GoogleAPIError, TimeoutError) as exc:
         raise QueryError(f"BigQuery is unavailable right now: {exc}") from exc
 
-    columns = [str(name) for name in frame.columns]
-    rows = frame.to_dict("records")
     meta = {
         "job_id": job.job_id,
         "gb_scanned": round((job.total_bytes_processed or 0) / 1e9, 3),
