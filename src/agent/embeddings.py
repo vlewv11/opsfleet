@@ -7,6 +7,12 @@ from src.utils.config import settings
 from src.utils.logger import event
 
 _TOKEN = re.compile(r"[a-z0-9_]+")
+_STOP = frozenset(
+    "and are but can did does for from had has have how its not our out she than that the them "
+    "then there these they this those was were what when where which who why will with you your "
+    "about any been because could would should into more most much only other over same some "
+    "such very want way well were".split()
+)
 
 
 @lru_cache(maxsize=1)
@@ -35,14 +41,15 @@ def embed(texts: list[str], query: bool = False) -> np.ndarray | None:
     return matrix / (np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-9)
 
 
+def _terms(text: str) -> set[str]:
+    return {token for token in _TOKEN.findall(text.lower()) if len(token) > 2 and token not in _STOP}
+
+
 def lexical_scores(query: str, documents: list[str]) -> np.ndarray:
-    terms = set(_TOKEN.findall(query.lower()))
+    terms = _terms(query)
     if not terms:
         return np.zeros(len(documents), dtype=np.float32)
     return np.array(
-        [
-            len(terms & set(_TOKEN.findall(doc.lower()))) / len(terms)
-            for doc in documents
-        ],
+        [len(terms & _terms(doc)) / len(terms) for doc in documents],
         dtype=np.float32,
     )
