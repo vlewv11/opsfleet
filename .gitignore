@@ -5,6 +5,7 @@ __pycache__/
 .env
 data/checkpoints.db
 data/reports/*.json
+data/charts/*.png
 data/knowledge_base/.index.npz
 logs/*.jsonl
 .DS_Store

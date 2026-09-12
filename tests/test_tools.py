@@ -85,3 +85,44 @@ def test_reports_and_preferences_are_per_user(monkeypatch, tmp_path):
     memory.remember("manager_a", "format", "tables")
     assert memory.preferences("manager_a")["format"] == "tables"
     assert memory.preferences("manager_b")["format"] == memory.DEFAULTS["format"]
+
+
+@pytest.fixture
+def library(monkeypatch, tmp_path):
+    monkeypatch.setattr(reports, "_DIR", tmp_path / "reports")
+    memory.active_user.set("manager_a")
+    memory.active_thread.set("thread-1")
+    a = reports.save("manager_a", "Q1 Review for Client X", "Client X grew 12%.", ["q1"])
+    memory.active_thread.set("thread-2")
+    b = reports.save("manager_a", "Returns deep dive", "Outerwear drove returns.", ["returns"])
+    c = reports.save("manager_b", "Client X pricing", "Client X margin fell.", ["pricing"])
+    return a, b, c
+
+
+def test_resolve_is_owner_scoped(library):
+    mine, _, theirs = library
+    matches = reports.resolve("manager_a", "Client X")
+    assert [r["id"] for r in matches] == [mine["id"]]
+    assert theirs["id"] not in [r["id"] for r in reports.resolve("manager_a", "all")]
+
+
+def test_delete_ignores_ids_the_caller_does_not_own(library):
+    mine, _, theirs = library
+    assert reports.delete("manager_a", [mine["id"], theirs["id"]]) == 1
+    assert reports.listing("manager_b")[0]["id"] == theirs["id"]
+
+
+def test_delete_is_soft_and_undoable(library):
+    mine, other, _ = library
+    reports.delete("manager_a", [mine["id"]])
+    assert [r["id"] for r in reports.listing("manager_a")] == [other["id"]]
+    assert [r["id"] for r in reports.restore("manager_a")] == [mine["id"]]
+    assert len(reports.listing("manager_a")) == 2
+    assert reports.restore("manager_a") == []
+
+
+def test_conversation_scope_resolves_against_the_thread(library):
+    _, other, _ = library
+    memory.active_thread.set("thread-2")
+    matches = reports.resolve("manager_a", "all", this_conversation=True)
+    assert [r["id"] for r in matches] == [other["id"]]

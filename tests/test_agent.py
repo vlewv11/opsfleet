@@ -1,6 +1,7 @@
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 
 from src.utils.config import settings
 from tests.conftest import FakeLLM
@@ -78,3 +79,66 @@ def test_llm_outage_degrades_without_crashing(make_graph, monkeypatch):
     monkeypatch.setattr(agent_module, "checkpointer", InMemorySaver)
     state = invoke(agent_module.build(), "revenue by month", thread="t5")
     assert "could not reach the analysis model" in str(state["messages"][-1].text)
+
+
+DELETE = {"name": "delete_reports", "args": {"selector": "Q1"}, "id": "d1", "type": "tool_call"}
+
+
+@pytest.fixture
+def one_report(monkeypatch, tmp_path):
+    from src.agent import memory
+    from src.tools import reports
+
+    monkeypatch.setattr(reports, "_DIR", tmp_path / "reports")
+    memory.active_user.set("manager_a")
+    memory.active_thread.set("t")
+    reports.save("manager_a", "Q1 Review", "body", [])
+    return reports
+
+
+def run_delete(graph, thread):
+    config = {"configurable": {"thread_id": thread}, "recursion_limit": 60}
+    graph.invoke(
+        {"messages": [HumanMessage("delete the Q1 report")], "user_id": "manager_a", "steps": 0, "exhausted": False},
+        config,
+    )
+    return config
+
+
+def test_delete_interrupts_before_touching_anything(make_graph, one_report):
+    fake = FakeLLM(responses=[AIMessage("", tool_calls=[DELETE]), AIMessage("Done.")])
+    graph = make_graph(fake)
+    config = run_delete(graph, "d1")
+    pending = graph.get_state(config).interrupts
+    assert pending and pending[0].value["reports"][0]["title"] == "Q1 Review"
+    assert len(one_report.listing("manager_a")) == 1
+
+
+def test_declining_the_confirmation_deletes_nothing(make_graph, one_report):
+    fake = FakeLLM(responses=[AIMessage("", tool_calls=[DELETE]), AIMessage("Cancelled.")])
+    graph = make_graph(fake)
+    config = run_delete(graph, "d2")
+    graph.invoke(Command(resume="no"), config)
+    assert len(one_report.listing("manager_a")) == 1
+
+
+def test_confirming_soft_deletes_and_undo_restores(make_graph, one_report):
+    fake = FakeLLM(responses=[AIMessage("", tool_calls=[DELETE]), AIMessage("Deleted.")])
+    graph = make_graph(fake)
+    config = run_delete(graph, "d3")
+    graph.invoke(Command(resume="yes"), config)
+    assert one_report.listing("manager_a") == []
+    assert len(one_report.restore("manager_a")) == 1
+
+
+def test_interrupt_reaches_the_stream_as_a_non_message_payload(make_graph, one_report):
+    fake = FakeLLM(responses=[AIMessage("", tool_calls=[DELETE])])
+    graph = make_graph(fake)
+    updates = list(
+        graph.stream(
+            {"messages": [HumanMessage("delete the Q1 report")], "user_id": "manager_a", "steps": 0, "exhausted": False},
+            {"configurable": {"thread_id": "d4"}, "recursion_limit": 60},
+            stream_mode="updates",
+        )
+    )
+    assert any(not isinstance(value, dict) for update in updates for value in update.values())

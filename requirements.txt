@@ -11,6 +11,7 @@ pydantic-settings>=2.7
 pyyaml>=6.0
 rich>=13.9
 numpy>=2.1
+matplotlib>=3.9
 
 # Golden-Bucket embeddings only; optional, see GOOGLE_API_KEY in .env.example
 langchain-google-genai>=2.1
