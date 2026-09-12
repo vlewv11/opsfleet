@@ -47,7 +47,12 @@ class BigQueryRunner:
             logging.error(f"BigQuery execution failed: {str(e)}")
             raise
 
-    def execute_query_rows(self, sql_query: str) -> tuple[List[str], List[Dict[str, Any]], bigquery.QueryJob]:
+    def execute_query_rows(
+        self,
+        sql_query: str,
+        job_config: Optional[bigquery.QueryJobConfig] = None,
+        timeout: Optional[float] = None,
+    ) -> tuple[List[str], List[Dict[str, Any]], bigquery.QueryJob]:
         """Execute a SQL query and return column names, row dicts and the completed job.
 
         Materialises rows straight from the result iterator rather than via a DataFrame,
@@ -55,6 +60,9 @@ class BigQueryRunner:
 
         Args:
             sql_query: The SQL query to execute.
+            job_config: Job configuration, carrying the server-side byte cap.
+            timeout: Seconds to wait for completion. The job is cancelled on expiry so a
+                hung query stops accruing cost instead of running on unobserved.
 
         Returns:
             Tuple of the column names in schema order, the rows as dictionaries, and the
@@ -65,8 +73,12 @@ class BigQueryRunner:
         """
         try:
             logging.info("Executing BigQuery query")
-            query_job = self.client.query(sql_query)
-            result = query_job.result()
+            query_job = self.client.query(sql_query, job_config=job_config)
+            try:
+                result = query_job.result(timeout=timeout)
+            except TimeoutError:
+                query_job.cancel()
+                raise
             columns = [field.name for field in result.schema]
             rows = [dict(row) for row in result]
             logging.info(f"Query completed successfully, returned {len(rows)} rows")

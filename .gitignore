@@ -9,6 +9,7 @@ data/charts/*.png
 data/knowledge_base/.index.npz
 logs/*.jsonl
 .DS_Store
+CLAUDE.md
 
 # GCP service-account keys — never commit.
 # Root-level JSON only, so data/knowledge_base/*.json and data/schema.json stay tracked.

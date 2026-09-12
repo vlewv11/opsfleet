@@ -43,6 +43,30 @@ def test_bad_input_is_rejected(kwargs, message):
         charts.render(**call)
 
 
+@pytest.fixture
+def axes(monkeypatch):
+    captured = []
+    original = charts.plt.subplots
+
+    def spy(*args, **kwargs):
+        figure, axis = original(*args, **kwargs)
+        captured.append(axis)
+        return figure, axis
+
+    monkeypatch.setattr(charts.plt, "subplots", spy)
+    return captured
+
+
+def test_barh_labels_sit_beside_the_axis_not_across_it(axes):
+    charts.render("t", "barh", ["Intimates & Sleepwear", "Outerwear & Coats"], {"s": [2.0, 1.0]})
+    assert [label.get_ha() for label in axes[0].get_yticklabels()] == ["right", "right"]
+
+
+def test_crowded_categories_are_angled_to_stay_readable(axes):
+    charts.render("t", "bar", [f"category {i}" for i in range(7)], {"s": [1.0] * 7})
+    assert all(label.get_rotation() == 45 for label in axes[0].get_xticklabels())
+
+
 def test_labels_are_scrubbed_before_they_reach_the_image(monkeypatch):
     captured = []
     original = charts.plt.subplots

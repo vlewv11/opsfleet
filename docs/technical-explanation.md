@@ -28,20 +28,75 @@ model is instructed to treat as binding.
 
 ### Retrieval at query time
 
-Hybrid, in [`golden.py:search`](../src/tools/golden.py):
+Rank fusion plus an explicit relevance gate, in [`golden.py:search`](../src/tools/golden.py).
+
+**Ordering is Reciprocal Rank Fusion, not a weighted sum of raw scores.** Cosine similarity against
+this corpus lives in a narrow band (~0.52–0.80) while lexical overlap spans 0–1, so the old
+`0.75 · cosine + 0.25 · lexical` was dominated by whichever term happened to have more variance, not
+by whichever was more informative. RRF fuses the two *rankings* instead, which needs no score
+normalisation:
 
 ```
-score = 0.75 · cosine(embedding(question), embedding(trio)) + 0.25 · lexical_overlap
+fused(trio) = 1/(K + rank_cosine) + 1/(K + rank_lexical)      K = 10
 ```
+
+`K = 10` rather than the customary 60 because the corpus is six documents, not a search index —
+at K = 60 every trio scores within 1% of every other and the fusion stops discriminating. A ranking
+carries no vote when it has no signal: if lexical overlap is zero for every trio, `argsort` returns
+mere index order, and folding that in would hand an arbitrary trio a full 1/(K+0) boost.
+
+**Relevance is a separate gate, because RRF always ranks something.** Rank fusion has no notion of
+"nothing here is relevant" — it will happily return a best-of-six for *what is the capital of
+France?* Two absolute conditions decide whether the query is covered at all:
+
+```
+cosine.max() ≥ 0.60          and          cosine.max() − cosine.mean() ≥ 0.035
+```
+
+Both were calibrated, not guessed, against the six trios: six paraphrased questions that should each
+hit a specific trio, and eleven that should hit nothing — seven out-of-domain (*capital of France*,
+*reset my password*) and four in-domain but uncovered (*what data do we have*, *average delivery
+time*). Measured separation:
+
+| | relevant (n=6) | irrelevant (n=11) |
+|---|---|---|
+| top cosine | 0.628 – 0.799 | 0.518 – 0.670 |
+| top − mean | **0.044 – 0.116** | **0.010 – 0.029** |
+
+Top cosine alone cannot separate them — *what data do we have and what can I ask about?* scores
+0.670, above the weakest genuine match at 0.628. The **spread** does, with a clean gap between 0.029
+and 0.044. Spread is also the right statistic rather than top1−top2, which collapses toward zero
+exactly when two trios are *both* apt and would reject a covered question; the four irrelevant
+trios still drag the mean down, so spread survives that case.
+
+Result on the calibration set: **6/6 relevant retrieved in the top 3 (5/6 ranked first), 11/11
+irrelevant rejected.** The probes are the live tests in
+[`tests/test_retrieval.py`](../tests/test_retrieval.py), so re-tuning a threshold breaks a test
+rather than silently changing behaviour.
+
+**Precedent-not-found is an explicit branch**, not an empty string. `search` returns `[]`, `render`
+emits a paragraph instructing the model to work from the schema and say plainly that it has no
+precedent, and the trace records the decision with the numbers behind it:
+`golden_search  mode=hybrid  hits=[]  top=0.617  spread=0.02`.
 
 The embedded document is question + tags + report, not the SQL — managers phrase questions in
 business language, and matching against the analyst's prose is what surfaces the right precedent.
-The lexical term is what rescues exact-token queries ("returns", "churn", a brand name) that
-embeddings smear. Vectors are cached to `.index.npz` keyed by a blake2b fingerprint of the corpus,
-so a restart costs nothing and a trio edit invalidates automatically.
+Stopwords and tokens of two characters or fewer are dropped before lexical scoring; without that,
+*what is the capital of France?* scored 0.500 against a trio purely on `what/is/the/of`, and seven
+of the eleven irrelevant probes now score exactly zero.
 
-**If the embedding API is down, retrieval degrades to pure lexical rather than failing** — the agent
-still gets precedents, just ranked less well.
+**Caching.** Vectors are cached to `.index.npz` keyed by a blake2b fingerprint of the corpus, so a
+restart costs nothing and a trio edit invalidates automatically. The parsed corpus is held in
+process against the knowledge base's newest mtime rather than an `lru_cache`, so editing a trio
+takes effect on the next question instead of requiring a restart. Results are memoised per question
+for 5 minutes, which is what stops the automatic `retrieve` node and a `search_precedents` tool call
+on the same wording from embedding that question twice in one turn.
+
+**If the embedding API is down, retrieval degrades to pure lexical rather than failing** — but
+honestly: the gate is then unreliable. Measured lexical-only, *how do I reset my password?* scores
+0.500 with a 0.361 spread, higher than most genuine matches, and only 3 of 6 relevant questions rank
+their own trio first. The fallback keeps the agent answering; it is not a mode to run in, and the
+trace labels it `mode=lexical` so it is never mistaken for the calibrated path.
 
 ### Updating the bucket over time
 
@@ -67,12 +122,12 @@ still cannot emit PII**.
 
 ### Layer 1 — Intent guard (model, fails open)
 
-[`agent.py:_guard`](../src/agent/agent.py) runs Flash with structured output before anything else.
+[`agent.py:_guard`](../src/agent/agent.py) runs the fast path with structured output before anything else.
 It blocks instruction-override attempts, requests for identifiable customer data, and off-topic use.
 
 It deliberately **fails open** on API error. The guard defends scope, not PII — PII is defended by
 layers 2–4, which cannot fail open because they are not models. Failing closed would turn a
-transient Flash blip into a total outage for a well-behaved manager, in exchange for no real
+transient model blip into a total outage for a well-behaved manager, in exchange for no real
 security. That trade is only sound *because* the deterministic layers exist below it.
 
 ### Layer 2 — SQL policy engine (deterministic)
@@ -129,9 +184,10 @@ smuggling, cross-project table access, multi-statement injection, and the `CAST`
 
 ---
 
-## 3. High-Stakes Oversight — **designed**
+## 3. High-Stakes Oversight — **implemented**
 
-Not coded (the two prototype requirements chosen were §2 and §5); the design is specific.
+[`delete_reports` / `undo_delete`](../src/tools/registry.py) + [`src/tools/reports.py`](../src/tools/reports.py)
++ the resume loop in [`src/cli/chat.py`](../src/cli/chat.py).
 
 ```mermaid
 sequenceDiagram
@@ -150,17 +206,23 @@ sequenceDiagram
 
 **Resolve, then confirm, then act.** The natural-language selector is turned into an explicit list of
 report ids in a read-only step. Confirmation is on that list, shown by title — never on the phrase.
-`"delete all the reports we made in this conversation"` resolves against the thread's checkpoint
-history, so it is exact rather than a fuzzy match.
+`"delete all the reports we made in this conversation"` sets `only_this_conversation`, which matches
+on the thread id stamped onto each report at save time, so it is exact rather than a fuzzy match.
 
-**Mechanism.** LangGraph's `interrupt()` in the delete node. The graph checkpoints and returns
-control; the resume carries the user's decision. Because state is durable, the confirmation survives
-an instance restart — the pending action is not held in memory.
+**Mechanism.** LangGraph's `interrupt()`, called inside the `delete_reports` tool between resolving
+and acting. `ToolNode` re-raises `GraphInterrupt` rather than swallowing it as a tool error, so no
+separate delete node is needed: the graph checkpoints mid-tool and returns control, and
+`Command(resume=…)` carries the manager's decision back into the same call. Because state is
+durable, the confirmation survives an instance restart — the pending action is not held in memory.
 
 **Authorisation is code, not prompt.** The ownership filter (`report.user_id == caller`) lives in the
 tool, so "delete Manager B's reports" returns zero resolved ids regardless of what the model was
-talked into. Deletes are soft with a 30-day tombstone on a versioned GCS bucket, every action writes
-an audit row, and `undo` is a first-class command.
+talked into — `reports.delete` intersects the requested ids with `listing(caller)` before touching
+anything, and the audit row records both counts, so a cross-owner attempt is visible as
+`requested: 2, ids: [one]`. Deletes are soft: the record keeps a `deleted_at` and a `delete_batch`
+stamp and drops out of `listing()`; `undo_delete` restores the most recent batch within a 30-day
+window. In production the tombstone is a versioned GCS object rather than a field on a local JSON
+file; the flow above is unchanged.
 
 **UX.** Only destructive actions confirm; saving, reading and listing never do. One confirmation
 covers a batch. The preview is the point — a manager approves *"these three, from March"*, not
@@ -216,13 +278,13 @@ human queue.
 
 ```
 enforce (AST policy)  ──fail──┐
-dry_run (BigQuery, free) ─────┤→  Flash repair with the exact error  →  retry (max 3)
+dry_run (BigQuery, free) ─────┤→  fast-path repair with the exact error  →  retry (max 3)
 execute (capped) ─────────────┘                                       →  give up, tell the truth
 ```
 
 **Repair is nearly free, by construction.** Validation happens against the sqlglot AST and a
 BigQuery **dry run**, which returns the real parser and schema errors and is billed at zero bytes.
-Repair itself runs on Flash. A query is only executed once it is known to be valid, so the expensive
+Repair itself runs on the fast path. A query is only executed once it is known to be valid, so the expensive
 resource is touched once, not four times. This is what satisfies "self-correct without inflating
 costs" — the retries are on the free path.
 
@@ -244,7 +306,17 @@ cost with zero chance of success.
 | `MAX_STEPS` | 12 | runaway tool loop |
 | `MAX_BYTES_BILLED` | 2 GB | a `CROSS JOIN` costing real money |
 | `ROW_LIMIT` | 500 | context blowout, bulk exfiltration |
-| `query_timeout_s` | 120 | a hung request holding an instance |
+| `query_timeout_s` | 120 s | a hung request holding an instance |
+
+The byte cap is enforced **twice, and the second one is the real control**. The dry run rejects an
+over-budget query before it runs, which is what gives the model a repairable error message; but a
+dry-run estimate is an estimate, so `maximum_bytes_billed` also rides on the execution job config
+and BigQuery aborts server-side if the plan turns out larger. A cap that only exists in our own
+process is advice, not a limit. The timeout is likewise enforced where it bills: `result(timeout=…)`
+bounds the wait and the job is **cancelled** on expiry, so a runaway query stops accruing cost
+instead of running on unobserved. A timed-out query is deliberately excluded from the retry
+predicate — re-running a query that already blew its budget is the one retry that cannot help and
+always costs.
 
 The step budget is enforced *deterministically*: [`agent.py:_route`](../src/agent/agent.py) can only
 reach `redact` once `exhausted` is set, so a model that keeps emitting tool calls after tools are
@@ -258,9 +330,9 @@ the model respecting unbound tools and looped to the recursion limit.
 |---|---|
 | BigQuery 5xx / rate limit | `google.api_core.Retry`, exponential backoff to 45 s |
 | BigQuery down | `QueryError` → the agent reports it in plain language, UI intact |
-| Gemini down (main) | caught in `_llm` → "I could not reach the analysis model just now"; conversation state is preserved, the user just re-asks |
-| Gemini down (guard) | fails open; deterministic PII layers still hold |
-| Gemini down (repair) | loop exits immediately rather than burning its budget on a dead service |
+| Model down (deep path) | caught in `_llm` → "I could not reach the analysis model just now"; conversation state is preserved, the user just re-asks |
+| Model down (guard) | fails open; deterministic PII layers still hold |
+| Model down (repair) | loop exits immediately rather than burning its budget on a dead service |
 | Embeddings down | hybrid retrieval degrades to lexical |
 | Any tool raising | `ToolNode(handle_tool_errors=True)` returns the error as an observation for the model to reason about |
 | Misconfiguration | caught by `preflight()` at startup with an actionable message, before the REPL opens |
@@ -280,7 +352,7 @@ the model respecting unbound tools and looped to the recursion limit.
 | Red team | ~50 injection / PII-extraction prompts | **zero leaks**, blocking |
 | SQL executability | eval questions must produce runnable SQL | ≥ 98% |
 | SQL correctness | result-set equivalence vs analyst reference SQL (set comparison, not string) | ≥ 90% |
-| Groundedness | Flash judge: every number in the report must appear in a tool result | ≥ 95%, blocking |
+| Groundedness | fast-path judge: every number in the report must appear in a tool result | ≥ 95%, blocking |
 | Convention adherence | judge scores the answer against the retrieved trio's Convention block | ≥ 85% |
 | Cost / latency | p95 tokens and seconds per question | regression alert |
 
@@ -326,10 +398,11 @@ Offline proxies do not measure UX. In production:
 {"ts": 1760, "trace": "a1b2c3", "event": "sql_ok", "seconds": 2.1, "repairs": 1, "gb_scanned": 1.4, "cache_hit": false, "rows": 12}
 ```
 
-Instrumented today: `guard`, `guard_unavailable`, `golden_search`, `golden_lexical_fallback`,
-`sql_rejected`, `sql_repaired`, `sql_ok`, `sql_empty`, `sql_gave_up`, `repair_unavailable`,
-`bq_execute`, `llm_unavailable`, `budget_exhausted`, `output_redacted`,
-`dangling_tool_calls_dropped`, `preference_saved`.
+Instrumented today, twenty-one events: `guard`, `guard_unavailable`, `golden_search`,
+`golden_lexical_fallback`, `embed_failed`, `sql_rejected`, `sql_repaired`, `sql_ok`, `sql_empty`,
+`sql_gave_up`, `repair_unavailable`, `bq_execute`, `llm_unavailable`, `budget_exhausted`,
+`output_redacted`, `dangling_tool_calls_dropped`, `preference_saved`, `reports_deleted`,
+`reports_restored`, `chart_created`, `answer`.
 
 ### Metrics at the agent level
 
@@ -345,7 +418,7 @@ Instrumented today: `guard`, `guard_unavailable`, `golden_search`, `golden_lexic
 | **Cost** | tokens and $ per answered question | the number that decides whether this scales |
 | | GB scanned per question, cache-hit rate | BigQuery is the cost floor |
 | | budget-exhaustion rate | agent not converging |
-| **Latency** | p50/p95 end-to-end, per node | isolates whether Pro, BigQuery or retrieval is slow |
+| **Latency** | p50/p95 end-to-end, per node | isolates whether the model, BigQuery or retrieval is slow |
 | **Quality** | thumbs-up rate, correction rate, save rate | §6 |
 | **Availability** | error rate by dependency | which third party is degrading |
 
@@ -380,6 +453,62 @@ discipline — the persona is not in a position to override anything that matter
 preview-before-publish step, versioning, and one-click rollback. Cached in-process for 60 s. Every
 trace records the persona version, so "reports got worse this week" is answerable by diffing
 persona versions against the quality metrics from §6.
+
+---
+
+## 9. Extensibility — **demonstrated**
+
+The brief asks for a system "easily extendable for new capabilities (generating graphs, sending
+reports via mail, searching the web for trends)". That is easy to assert and cheap to prove, so
+[`create_chart`](../src/tools/registry.py) was added as the worked example — and the interesting
+part is what did *not* have to change.
+
+**Adding a capability is one function and one list entry.** `create_chart` is a `@tool`-decorated
+function plus a line in `TOOLS`. The graph in [`agent.py:build`](../src/agent/agent.py) is
+untouched: `ToolNode(TOOLS)` binds whatever is in the list, `_route` already loops `llm → tools →
+llm` for any tool, and the step budget already bounds it. No node, no edge, no router change.
+
+Everything crosscutting applies for free, because it is attached to the pipeline rather than to each
+tool:
+
+| the new tool inherits | from |
+|---|---|
+| PII scrubbing of every title and label | `scrub()` in [`charts.py`](../src/tools/charts.py), the same function `save_report` uses |
+| the intent guard running before it | the `guard` node, which precedes every tool call |
+| step-budget termination | `_route` and the `budget` node |
+| an audit row with user, path and shape | `event("chart_created", …)` into the same trace as every SQL job |
+| per-manager preference control | `remember_preference` — no chart-specific plumbing |
+
+That last row is the one worth watching in the recording. Requirement 4.1 asks the agent to learn
+"do they prefer charts or text"; there is no code path connecting preferences to charts, yet:
+
+```
+manager_a › From now on I prefer charts over tables whenever the numbers allow it.
+  → remember_preference {"key": "charts", "value": "prefer charts over tables …"}
+
+manager_a › How do the top 5 product categories compare on net revenue?
+  → create_chart {"kind": "barh", …}          ← unprompted
+```
+
+The preference is injected into the system prompt on the next turn and the model reaches for the new
+tool by itself. A capability added on Tuesday is governed by a preference stated on Monday, with no
+code joining them.
+
+**What a tool must not do.** `create_chart` takes numbers, never SQL. Letting it query would fork a
+second execution path around the policy engine in [`pii.py`](../src/utils/pii.py), and the PII
+guarantee rests on there being exactly one way to reach BigQuery. New capabilities compose with
+`query_data`; they do not re-implement it. Validation lives in `charts.render` and raises
+`ValueError`; the tool converts that into a sentence the model can act on, so bad arguments become a
+retry rather than a crashed turn — the same contract `query_data` has with `QueryError`.
+
+**The other two examples in the brief** land the same way. *Sending a report by mail* is a tool that
+reads from the existing report store and calls an SMTP or SendGrid client — and because it is
+outbound and hard to retract, it would reuse the `interrupt()` confirmation that `delete_reports`
+already established rather than inventing its own. *Searching the web for trends* is a tool wrapping
+a search API whose results are untrusted text, so it would return quoted context the model must
+attribute, never instructions. **New data sources** are the one case that is not just a tool: a
+second warehouse needs its own entry in the table allow-list and its own PII policy, which is why
+that allow-list is derived from `BQ_DATASET` in `pii.py` rather than hardcoded.
 
 ---
 

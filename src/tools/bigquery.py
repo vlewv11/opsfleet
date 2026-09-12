@@ -8,13 +8,13 @@ from google.oauth2 import service_account
 
 from src.tools.bq_runner import BigQueryRunner
 from src.utils.config import settings
-from src.utils.logger import event
+from src.utils.logger import event, trace_id
 
 TABLES = ("orders", "order_items", "products", "users")
 _CACHE = settings.data_dir / "schema.json"
 _RETRY = retry.Retry(
     predicate=retry.if_exception_type(
-        exceptions.ServerError, exceptions.TooManyRequests, ConnectionError, TimeoutError
+        exceptions.ServerError, exceptions.TooManyRequests, ConnectionError
     ),
     initial=1.0,
     maximum=8.0,
@@ -55,12 +55,25 @@ def dry_run(sql: str) -> int:
 
 def execute(sql: str) -> tuple[list[str], list[dict], dict]:
     try:
-        columns, rows, job = _RETRY(client().execute_query_rows)(sql)
+        columns, rows, job = _RETRY(client().execute_query_rows)(
+            sql,
+            job_config=bigquery.QueryJobConfig(
+                maximum_bytes_billed=settings.max_bytes_billed,
+                use_query_cache=True,
+                labels={"trace": trace_id.get().lower()[:63]},
+            ),
+            timeout=settings.query_timeout_s,
+        )
+    except TimeoutError as exc:
+        raise QueryError(
+            f"The query was still running after {settings.query_timeout_s}s and was cancelled. "
+            "Narrow the date range or aggregate further."
+        ) from exc
     except exceptions.BadRequest as exc:
         raise QueryError(exc.message.split("\n\n")[0]) from exc
     except exceptions.Forbidden as exc:
         raise QueryError(f"BigQuery denied the request: {exc.message}") from exc
-    except (exceptions.GoogleAPIError, TimeoutError) as exc:
+    except exceptions.GoogleAPIError as exc:
         raise QueryError(f"BigQuery is unavailable right now: {exc}") from exc
 
     meta = {

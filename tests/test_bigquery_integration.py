@@ -36,6 +36,12 @@ def test_dry_run_enforces_the_cost_cap(monkeypatch):
         dry_run(SMALL)
 
 
+def test_execution_is_capped_server_side_not_only_by_the_dry_run(monkeypatch):
+    monkeypatch.setattr(settings, "max_bytes_billed", 1)
+    with pytest.raises(QueryError):
+        execute(SMALL)
+
+
 def test_syntax_error_is_mapped_to_query_error():
     with pytest.raises(QueryError) as excinfo:
         dry_run(f"SELECT stat FROMM `{D}.users`")

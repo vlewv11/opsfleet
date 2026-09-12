@@ -53,10 +53,12 @@ def render(title: str, kind: str, labels: list[str], series: dict[str, list[floa
             offset = [point + index * step - 0.4 + step / 2 for point in span]
             plot = axes.barh if kind == "barh" else axes.bar
             plot(offset, values, step * 0.92, label=scrub(name))
-        ticks = axes.set_yticks if kind == "barh" else axes.set_xticks
-        tick_labels = axes.set_yticklabels if kind == "barh" else axes.set_xticklabels
-        ticks(list(span))
-        tick_labels(labels, rotation=45 if kind == "bar" and len(labels) > 6 else 0, ha="right" if kind == "bar" and len(labels) > 6 else "center")
+        if kind == "barh":
+            axes.set_yticks(list(span))
+            axes.set_yticklabels(labels)
+        else:
+            axes.set_xticks(list(span))
+            axes.set_xticklabels(labels, rotation=45 if len(labels) > 6 else 0, ha="right" if len(labels) > 6 else "center")
 
     if kind == "barh":
         axes.invert_yaxis()

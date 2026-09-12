@@ -38,8 +38,8 @@ graph TB
     end
 
     subgraph llm["Model layer"]
-        PRO["Gemini 2.5 Pro<br/><i>planning, SQL, narrative</i>"]
-        FLASH["Gemini 2.5 Flash<br/><i>guard, SQL repair, judge</i>"]
+        DEEP["Gemini 3.8 Flash · high effort<br/><i>planning, SQL, narrative</i>"]
+        FAST["Gemini 3.8 Flash · low effort<br/><i>guard, SQL repair, judge</i>"]
         EMB["gemini-embedding-001"]
     end
 
@@ -52,7 +52,7 @@ graph TB
     CLI & SLACK & WEB --> IAP --> API --> GRAPH
     GRAPH --> POLICY --> AV --> RAW
     GRAPH <--> PG & FS & GCSR
-    GRAPH --> PRO & FLASH
+    GRAPH --> DEEP & FAST
     GRAPH --> IDX
     IDX -.reindex.-> GCSG
     GCSG --> REVIEW
@@ -97,10 +97,10 @@ graph TD;
 
 | Node | Responsibility | Model |
 |---|---|---|
-| `guard` | Scope + prompt-injection screen. Fails **open** — see §3. | Flash, structured output |
+| `guard` | Scope + prompt-injection screen. Fails **open** — see §3. | fast path, structured output |
 | `retrieve` | Hybrid search of the Golden Bucket for the current question | Embedding + lexical |
-| `llm` | Plan, choose tools, write SQL, narrate the answer | Pro |
-| `tools` | `describe_data`, `search_precedents`, `query_data`, `save_report`, `remember_preference` | — |
+| `llm` | Plan, choose tools, write SQL, narrate the answer | deep path |
+| `tools` | `describe_data`, `search_precedents`, `query_data`, `create_chart`, `save_report`, `delete_reports`, `undo_delete`, `remember_preference` | `delete_reports` calls `interrupt()` between resolving and acting |
 | `budget` | Hard stop. Answers pending tool calls, unbinds tools, forces a final answer | — |
 | `redact` | Output scrub + drops dangling tool calls so history stays valid | — |
 
@@ -114,9 +114,9 @@ never the thing that stops us — a bounded budget is.
 sequenceDiagram
     autonumber
     participant U as Manager
-    participant G as guard (Flash)
+    participant G as guard (fast)
     participant R as retrieve
-    participant L as llm (Pro)
+    participant L as llm (deep)
     participant P as policy engine
     participant BQ as BigQuery
     participant X as redact
@@ -127,7 +127,7 @@ sequenceDiagram
     Note over R,L: precedent carries the house rule:<br/>never compare absolute revenue across regions
     L->>P: SELECT u.state, u.email, SUM(sale_price) ...
     P--xL: PolicyError: `email` is blocked
-    Note over P,L: repair loop, Flash, no BigQuery cost
+    Note over P,L: repair loop, fast path, no BigQuery cost
     L->>P: SELECT u.state, COUNT(DISTINCT u.id), ...
     P->>P: hash user ids · force LIMIT · block star
     P->>BQ: dry run (free) → 1.4 GB, under budget
@@ -153,7 +153,7 @@ graph LR
     end
 
     subgraph read["Read path — query time"]
-        Q["User question"] --> HY["Hybrid retrieval<br/>0.75 · cosine + 0.25 · lexical"]
+        Q["User question"] --> HY["Hybrid retrieval<br/>RRF over cosine + lexical ranks<br/>+ absolute relevance gate"]
         IDX --> HY
         HY --> TOPK["top-k trios → system prompt"]
     end
@@ -171,8 +171,8 @@ next ten answers to be wrong the same way.
 |---|---|---|
 | Agent framework | **LangGraph** | The requirements are all control-flow requirements: a confirmation interrupt for deletes, a bounded repair loop, a guard that must run before anything else, resumable multi-turn state. LangGraph makes the control flow an explicit, inspectable, testable graph and ships durable checkpointing and `interrupt()` as primitives. A ReAct-only framework (plain LangChain agent, CrewAI) hides exactly the part we must be able to prove correct. |
 | Compute | **Cloud Run** | Bursty, request-scoped, long-tailed (a multi-step analysis can take minutes). Cloud Run gives 60-minute request timeouts, per-instance concurrency, scale-to-zero between the exec team's working hours, and no cluster to operate. GKE buys nothing here. |
-| Reasoning model | **Gemini 2.5 Pro** | Long context for schema + precedents + history, strong text-to-SQL, native structured output and tool use. |
-| Utility model | **Gemini 2.5 Flash** | The guard, the SQL repair and the eval judge run on every turn and must not dominate cost or latency. Roughly an order of magnitude cheaper; the tasks are narrow and well-specified. |
+| Reasoning model | **Gemini 3.8 Flash at high reasoning effort** | Long context for schema + precedents + history, strong text-to-SQL, native structured output and tool use. Served through OpenRouter, so a heavier model can be swapped in from `configs/llm.yaml` with no code change. |
+| Utility model | **the same model at low reasoning effort** | The guard, the SQL repair and the eval judge run on every turn and must not dominate cost or latency, and each is narrow and well specified. Toggling the thinking budget rather than the model keeps one provider, one client and one set of credentials; `configs/llm.yaml` can point the fast path at a cheaper model if the split ever pays for itself. |
 | Conversation state | **Postgres checkpointer** (SQLite in the prototype) | LangGraph's `AsyncPostgresSaver` on Cloud SQL. Transactional, survives instance recycling, and the checkpoint tables double as an audit record of what the agent saw. |
 | Preferences / persona | **Firestore** | Single-document reads keyed by user, sub-10 ms, trivially editable by an internal admin page. Relational modelling buys nothing for a preference blob. |
 | Golden index | **pgvector on the existing Cloud SQL** | At the realistic scale of this bucket (thousands, not millions, of trios) a dedicated vector service is operational overhead for no gain. pgvector keeps vectors transactional with their metadata and lets hybrid search be one SQL statement. Move to Vertex AI Vector Search only past ~1M vectors. |
@@ -190,5 +190,5 @@ next ten answers to be wrong the same way.
 | Preferences | `data/preferences.json` | Firestore |
 | PII defence | sqlglot AST policy + output scrub | the same, **plus** authorized views and policy tags |
 | Persona | `data/persona.md`, re-read every turn | GCS object + admin page, 60 s TTL |
-| Reports | local JSON | GCS, versioned, soft delete |
+| Reports | local JSON, soft delete + undo | GCS, versioned, soft delete |
 | Traces | JSONL in `logs/` | Cloud Logging → BigQuery, Langfuse |

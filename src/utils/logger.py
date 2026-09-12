@@ -8,7 +8,7 @@ from datetime import date
 from src.utils.config import settings
 
 trace_id: ContextVar[str] = ContextVar("trace_id", default="-")
-_sink = None
+_sink: tuple[date, object] | None = None
 
 
 def new_trace() -> str:
@@ -19,10 +19,13 @@ def new_trace() -> str:
 
 def event(name: str, **fields) -> None:
     global _sink
-    if _sink is None:
+    today = date.today()
+    if _sink is None or _sink[0] != today:
+        if _sink is not None:
+            _sink[1].close()
         settings.log_dir.mkdir(parents=True, exist_ok=True)
-        _sink = open(settings.log_dir / f"trace-{date.today()}.jsonl", "a", buffering=1)
-    _sink.write(
+        _sink = (today, open(settings.log_dir / f"trace-{today}.jsonl", "a", buffering=1))
+    _sink[1].write(
         json.dumps(
             {"ts": time.time(), "trace": trace_id.get(), "event": name, **fields},
             default=str,
@@ -32,11 +35,12 @@ def event(name: str, **fields) -> None:
 
 
 def read_trace(tid: str) -> list[dict]:
-    path = settings.log_dir / f"trace-{date.today()}.jsonl"
-    if not path.exists():
-        return []
-    with open(path) as fh:
-        return [e for line in fh if (e := json.loads(line))["trace"] == tid]
+    return [
+        entry
+        for path in sorted(settings.log_dir.glob("trace-*.jsonl"))
+        for line in open(path)
+        if (entry := json.loads(line))["trace"] == tid
+    ]
 
 
 logging.getLogger().addHandler(logging.NullHandler())

@@ -68,8 +68,9 @@ def search(question: str, k: int = 0) -> list[dict]:
     if not trios:
         return []
 
+    now = time.monotonic()
     cached = _query_cache.get(question)
-    if cached and time.monotonic() - cached[0] < QUERY_TTL:
+    if cached and now - cached[0] < QUERY_TTL:
         return cached[1]
 
     lexical = lexical_scores(question, docs)
@@ -95,7 +96,9 @@ def search(question: str, k: int = 0) -> list[dict]:
         order = [i for i in np.argsort(-fused) if admissible[i]][: (k or settings.golden_top_k)]
         hits = [trios[i] | {"score": round(float(shown[i]), 3)} for i in order]
 
-    _query_cache[question] = (time.monotonic(), hits)
+    for stale in [q for q, (at, _) in _query_cache.items() if now - at >= QUERY_TTL]:
+        del _query_cache[stale]
+    _query_cache[question] = (now, hits)
     event(
         "golden_search",
         question=question[:120],

@@ -4,8 +4,9 @@ import pytest
 
 import src.agent.executor as ex
 from src.agent import memory
-from src.tools import golden, reports
+from src.tools import bigquery as bq, golden, reports
 from src.tools.bigquery import QueryError
+from src.utils import logger
 from src.utils.config import settings
 
 GOOD = f"SELECT state FROM `{settings.bq_dataset}.users` LIMIT 5"
@@ -126,3 +127,41 @@ def test_conversation_scope_resolves_against_the_thread(library):
     memory.active_thread.set("thread-2")
     matches = reports.resolve("manager_a", "all", this_conversation=True)
     assert [r["id"] for r in matches] == [other["id"]]
+
+
+class _Job:
+    job_id, total_bytes_processed, cache_hit = "job-1", 4096, False
+
+
+@pytest.fixture
+def spy_runner(monkeypatch):
+    seen = {}
+
+    def execute_query_rows(sql, job_config=None, timeout=None):
+        seen.update(sql=sql, job_config=job_config, timeout=timeout)
+        return ["state"], [{"state": "Texas"}], _Job()
+
+    monkeypatch.setattr(bq, "client", lambda: type("R", (), {"execute_query_rows": staticmethod(execute_query_rows)}))
+    token = logger.trace_id.set("AbC123")
+    yield seen
+    logger.trace_id.reset(token)
+
+
+def test_execution_carries_the_byte_cap_timeout_and_trace_label(spy_runner):
+    bq.execute(GOOD)
+    assert spy_runner["job_config"].maximum_bytes_billed == settings.max_bytes_billed
+    assert spy_runner["timeout"] == settings.query_timeout_s
+    assert spy_runner["job_config"].labels == {"trace": "abc123"}
+
+
+def test_timeout_is_reported_and_never_retried(monkeypatch):
+    calls = {"n": 0}
+
+    def execute_query_rows(sql, job_config=None, timeout=None):
+        calls["n"] += 1
+        raise TimeoutError("job still running")
+
+    monkeypatch.setattr(bq, "client", lambda: type("R", (), {"execute_query_rows": staticmethod(execute_query_rows)}))
+    with pytest.raises(QueryError, match="cancelled"):
+        bq.execute(GOOD)
+    assert calls["n"] == 1
