@@ -1,0 +1,9 @@
+llm:
+  model: "google/gemini-3.8-flash"
+  temperature: 0
+  top_p: 0.5
+  max_tokens: 8000
+  timeout: 120
+  max_retries: 4
+  effort: high
+  fast_effort: low

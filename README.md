@@ -3,7 +3,7 @@
 A conversational data-analysis agent for non-technical store and regional managers. Ask questions
 about sales, customers and product performance in plain English; the agent plans the analysis,
 writes and repairs its own BigQuery SQL, applies analyst precedent, and answers in business
-language. Built on **LangGraph** + **Gemini 2.5** over `bigquery-public-data.thelook_ecommerce`.
+language. Built on **LangGraph** + **Gemini 3.8** over `bigquery-public-data.thelook_ecommerce`.
 
 📐 **[Architecture / HLD](docs/architecture.md)**  ·  📄 **[Technical explanation](docs/technical-explanation.md)**
 
@@ -44,11 +44,22 @@ cp .env.example .env      # then set OPENROUTER_API_KEY and GCP_PROJECT
 OPENROUTER_API_KEY=sk-or-v1-...
 ```
 
-The model and generation parameters live in `configs/reasoning.yaml` (deep analysis) and
-`configs/fast.yaml` (guard checks and SQL repair), validated and loaded by the `UnifiedLLMClient` in
-`src/agent/llm_client.py`, adapted from
+The model and generation parameters live in a single `configs/llm.yaml`, validated and loaded by the
+`UnifiedLLMClient` in `src/agent/llm_client.py`, adapted from
 [Opsfleet/lc-openrouter-ollama-client](https://github.com/Opsfleet/lc-openrouter-ollama-client) and
 narrowed to OpenRouter, which is the only chat provider this project targets.
+
+One model serves both paths; **thinking budget** is the only thing that varies:
+
+| path | used by | `reasoning_effort` | reasoning tokens |
+|---|---|---|---|
+| deep | analysis and report writing | `effort: high` | ~130 |
+| fast | intent guard, SQL repair | `fast_effort: low` | 0 |
+
+Gemini 3.x will not let you switch thinking off outright — `reasoning_effort: none`,
+`{"enabled": false}` and `{"max_tokens": 0}` all return *400 Reasoning is mandatory for this
+endpoint and cannot be disabled*. `low` emits zero reasoning tokens, which is the same thing in
+practice and is what the fast path uses.
 
 **2. BigQuery access** — the dataset is public, but queries bill to *your* project (free tier covers
 1 TB/month; this agent caps every query at 2 GB).
@@ -107,7 +118,7 @@ python -m pytest tests/ -q          # 28 tests, no API key or network required
 ```
 ╭──────────────────────────────────────────────────────────────────────────╮
 │ Retail Analytics Assistant                                               │
-│ dataset bigquery-public-data.thelook_ecommerce · model gemini-2.5-pro    │
+│ dataset bigquery-public-data.thelook_ecommerce · model gemini-3.8-flash  │
 ╰──────────────────────────────────────────────────────────────────────────╯
 
 manager_a › what data do we have and what can I ask about?
@@ -206,7 +217,7 @@ opsfleet/
 │   ├── agent/
 │   │   ├── agent.py            LangGraph: guard → retrieve → llm ⇄ tools → redact
 │   │   ├── executor.py         self-correcting SQL loop (validate → dry run → repair)
-│   │   ├── llm_client.py       UnifiedLLMClient — Gemini via OpenRouter
+│   │   ├── llm_client.py       UnifiedLLMClient — Gemini via OpenRouter, effort-toggled
 │   │   ├── embeddings.py       Gemini embeddings + lexical fallback
 │   │   ├── state.py            graph state
 │   │   └── memory.py           checkpointer + per-user preferences
@@ -254,7 +265,8 @@ Honest accounting of what has been executed:
 | ✅ CLI runs | including both preflight failure paths |
 | ✅ Every Golden Bucket trio's SQL validated | against the live policy engine |
 | ✅ Live BigQuery execution | `SELECT id, state, age FROM users LIMIT 3` ran end-to-end through the executor against the real dataset; `id` came back SHA-256 hashed, confirming the policy engine rewrites the AST before execution rather than filtering afterwards |
-| ✅ Live end-to-end run | "top 3 categories by revenue" → Gemini 2.5 Pro over OpenRouter → `query_data` → live BigQuery → answer |
+| ✅ Live end-to-end run | "top 3 categories by revenue" → Gemini 3.8 Flash over OpenRouter → `query_data` → live BigQuery → answer |
+| ✅ Live multi-step "why" run | "why are Texas customers underspending vs California" → 3 chained queries (spend → funnel → traffic source) → premise corrected, driver named, action proposed |
 | ✅ Golden Bucket applied to live SQL | unprompted, the agent added `WHERE NOT oi.status IN ('Cancelled','Returned')` — the house revenue convention carried by the trios, not by the schema |
 
 ---

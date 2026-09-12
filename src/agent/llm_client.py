@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from src.utils.config import ROOT, settings
 
 PLATFORM = "openrouter"
-_CONFIGS = ROOT / "configs"
+_CONFIG = ROOT / "configs" / "llm.yaml"
 
 
 class APIKeyError(RuntimeError):
@@ -23,10 +23,12 @@ class LLMConfig(BaseModel):
     top_p: float = Field(default=0.9, ge=0.0, le=1.0)
     timeout: int = Field(default=60, gt=0)
     max_retries: int = Field(default=3, ge=0)
+    effort: str = "high"
+    fast_effort: str = "low"
 
 
 class UnifiedLLMClient:
-    def __init__(self, config_path: Path) -> None:
+    def __init__(self, config_path: Path, fast: bool = False) -> None:
         if not config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
         if not settings.openrouter_api_key:
@@ -44,12 +46,13 @@ class UnifiedLLMClient:
             top_p=self.config.top_p,
             timeout=self.config.timeout,
             max_retries=self.config.max_retries,
+            reasoning_effort=self.config.fast_effort if fast else self.config.effort,
         )
 
 
 @lru_cache(maxsize=2)
 def client(fast: bool) -> UnifiedLLMClient:
-    return UnifiedLLMClient(_CONFIGS / f"{'fast' if fast else 'reasoning'}.yaml")
+    return UnifiedLLMClient(_CONFIG, fast)
 
 
 def get_llm(fast: bool = False) -> BaseChatModel:
