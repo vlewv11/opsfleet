@@ -8,5 +8,6 @@ class AgentState(TypedDict, total=False):
     messages: Annotated[list[AnyMessage], add_messages]
     user_id: str
     golden: str
+    analysis: bool
     steps: int
     exhausted: bool

@@ -101,7 +101,7 @@ setting that changes, because `src/utils/pii.py` derives its table allow-list fr
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q                  # 58 offline tests, no API key or network
+python -m pytest -q                  # 62 offline tests, no API key or network
 python -m pytest -m integration -q   # 29 live tests (BigQuery + retrieval probes)
 ```
 
@@ -116,16 +116,16 @@ from live rows, and the row cap holding against real data.
 
 **A real session, not an illustration** — recorded end-to-end against live BigQuery. Eleven turns,
 27 BigQuery jobs, **0.192 GB scanned in total**. Three artefacts from that run are committed:
-[`docs/demo.cast`](docs/demo.cast) (`asciinema play`),
-[`docs/demo-transcript.txt`](docs/demo-transcript.txt), and
-[`docs/demo-trace.jsonl`](docs/demo-trace.jsonl) — every SQL job id, bytes scanned, repair and guard
+[`docs/demo/demo.cast`](docs/demo/demo.cast) (`asciinema play`),
+[`docs/demo/demo-transcript.txt`](docs/demo/demo-transcript.txt), and
+[`docs/demo/demo-trace.jsonl`](docs/demo/demo-trace.jsonl) — every SQL job id, bytes scanned, repair and guard
 verdict.
 
-The session is reproducible: [`docs/demo-questions.txt`](docs/demo-questions.txt) is the exact input
+The session is reproducible: [`docs/demo/demo-questions.txt`](docs/demo/demo-questions.txt) is the exact input
 that produced those three artefacts, and the CLI reads piped stdin.
 
 ```bash
-python main.py < docs/demo-questions.txt
+python main.py < docs/demo/demo-questions.txt
 ```
 
 ```
@@ -213,14 +213,14 @@ opsfleet/
 │   │   ├── config.py           env-backed settings
 │   │   └── logger.py           structured JSONL traces
 │   └── cli/chat.py             REPL, preflight, streaming tool activity
-├── tests/                      87 tests — policy, graph, executor, retrieval, tools, charts
+├── tests/                      91 tests — policy, graph, executor, retrieval, tools, charts
 ├── data/
 │   ├── knowledge_base/         Golden Bucket trios
 │   ├── persona.md              business-editable tone (hot-reloaded)
 │   ├── preferences.json        per-manager preferences
 │   └── reports/                saved reports
 ├── logs/                       trace-YYYY-MM-DD.jsonl
-└── docs/                       HLD + technical explanation
+└── docs/                       HLD + technical explanation + demo/ recording
 ```
 
 Everything the agent reasons *with* — the chat client, embeddings, memory, state, the graph — lives

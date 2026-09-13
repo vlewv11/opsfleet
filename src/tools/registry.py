@@ -37,8 +37,9 @@ def describe_data() -> str:
 def search_precedents(question: str) -> str:
     """Retrieve past analyst work (question, the SQL they wrote, and their written interpretation).
 
-    The precedents for the manager's original question are already in your system prompt. Call this
-    only to re-search with different wording when those did not fit. The precedents carry house
+    When the manager's question called for precedents they are already in your system prompt. Call
+    this to search with different wording when those did not fit, or when a turn that started as
+    report management or small talk turns into an analysis question. The precedents carry house
     conventions - metric definitions, exclusions, how to frame a finding - that are not in the
     schema and that the business expects you to follow. If nothing matches closely enough you are
     told so explicitly: work from the schema and say you have no precedent, rather than stretching

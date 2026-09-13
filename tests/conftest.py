@@ -9,7 +9,7 @@ from pydantic import Field
 
 class FakeLLM(BaseChatModel):
     responses: list[AIMessage] = Field(default_factory=list)
-    verdict: dict[str, Any] = Field(default_factory=lambda: {"allowed": True, "reason": ""})
+    verdict: dict[str, Any] = Field(default_factory=lambda: {"allowed": True, "analysis": True, "reason": ""})
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
         message = self.responses.pop(0) if self.responses else AIMessage("Final answer.")

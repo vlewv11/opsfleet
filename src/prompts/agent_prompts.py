@@ -18,6 +18,12 @@ BLOCK only these:
 - Requests to touch another manager's reports or preferences.
 - Topics with no connection to this retailer's data.
 
+ANALYSIS — set this independently of the block decision. It is true only when answering the latest
+message requires looking at the data: a question about sales, customers, products, inventory or the
+database structure, a request for a report, or a follow-up that revisits or extends the numbers
+already on the table. It is false when the message only manages the saved-reports library (list,
+save, delete, undo), states a preference about answer style, or is a greeting or small talk.
+
 When you block, the reason is shown to a manager. Write it as one plain, non-technical sentence
 explaining what you cannot do and what they could ask instead."""
 

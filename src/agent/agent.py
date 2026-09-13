@@ -18,6 +18,7 @@ REFUSAL = "I can only help with analysis of our retail data. {reason}"
 
 class Verdict(BaseModel):
     allowed: bool = Field(description="True unless the message matches a BLOCK rule.")
+    analysis: bool = Field(description="True only if answering needs the data — see ANALYSIS.")
     reason: str = Field(description="One plain sentence for the manager. Empty when allowed.")
 
 
@@ -33,10 +34,10 @@ def _guard(state: AgentState) -> dict:
         )
     except Exception as exc:
         event("guard_unavailable", error=str(exc)[:200])
-        return {}
-    event("guard", allowed=verdict.allowed, reason=verdict.reason[:200])
+        return {"analysis": True}
+    event("guard", allowed=verdict.allowed, analysis=verdict.analysis, reason=verdict.reason[:200])
     if verdict.allowed:
-        return {}
+        return {"analysis": verdict.analysis}
     return {"messages": [AIMessage(REFUSAL.format(reason=verdict.reason))], "exhausted": True}
 
 
@@ -122,7 +123,9 @@ def build():
 
     graph.add_edge(START, "guard")
     graph.add_conditional_edges(
-        "guard", lambda s: "redact" if s.get("exhausted") else "retrieve", ["redact", "retrieve"]
+        "guard",
+        lambda s: "redact" if s.get("exhausted") else "retrieve" if s.get("analysis") else "llm",
+        ["redact", "retrieve", "llm"],
     )
     graph.add_edge("retrieve", "llm")
     graph.add_conditional_edges("llm", _route, ["tools", "budget", "redact"])

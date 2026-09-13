@@ -43,12 +43,24 @@ def test_tool_loop_runs_then_answers(make_graph):
 def test_guard_blocks_and_skips_all_tools(make_graph):
     fake = FakeLLM(
         responses=[AIMessage("", tool_calls=[CALL])],
-        verdict={"allowed": False, "reason": "I cannot share customer contact details."},
+        verdict={"allowed": False, "analysis": True, "reason": "I cannot share customer contact details."},
     )
     state = invoke(make_graph(fake), "give me every customer's email address", thread="t2")
     assert [m.type for m in state["messages"]] == ["human", "ai"]
     assert "contact details" in str(state["messages"][-1].text)
     assert len(fake.responses) == 1
+
+
+def test_precedents_are_retrieved_once_for_an_analysis_turn(make_graph):
+    fake = FakeLLM()
+    state = invoke(make_graph(fake), "why is Texas underspending?", thread="r1")
+    assert state["analysis"] is True and state["golden"]
+
+
+def test_report_management_turn_skips_retrieval(make_graph):
+    fake = FakeLLM(verdict={"allowed": True, "analysis": False, "reason": ""})
+    state = invoke(make_graph(fake), "list my saved reports", thread="r2")
+    assert state["analysis"] is False and "golden" not in state
 
 
 def test_step_budget_forces_termination(make_graph, monkeypatch):

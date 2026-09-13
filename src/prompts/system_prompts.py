@@ -40,6 +40,9 @@ def build(user_id: str, golden_context: str) -> str:
         f"## Schema of `{settings.bq_dataset}`\n"
         f"```json\n{json.dumps(schema(), indent=1)}\n```\n\n"
         f"## Report persona (set by the business)\n{persona}\n\n"
-        f"## Learned preferences for {user_id}\n{prefs}\n\n"
-        f"## Analyst precedents retrieved for this question\n{golden_context}\n"
+        f"## Learned preferences for {user_id}\n{prefs}\n"
+    ) + (
+        f"\n## Analyst precedents retrieved for this question\n{golden_context}\n"
+        if golden_context
+        else ""
     )

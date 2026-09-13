@@ -28,6 +28,14 @@ model is instructed to treat as binding.
 
 ### Retrieval at query time
 
+Retrieval runs at most once per user message, and only when it can pay for itself. The guard call
+that every turn already makes returns an `analysis` flag alongside its allow/block verdict, and the
+graph routes `guard → retrieve` only when that flag is set. Managing the report library, stating a
+preference or saying hello goes straight to the model: no embedding call, no precedent block in the
+prompt. When such a turn turns out to need precedents after all, the model still has the
+`search_precedents` tool. Precedents already retrieved stay in state for the rest of the thread, so
+a follow-up on the same analysis keeps the conventions it was answered under.
+
 Rank fusion plus an explicit relevance gate, in [`golden.py:search`](../src/tools/golden.py).
 
 **Ordering is Reciprocal Rank Fusion, not a weighted sum of raw scores.** Cosine similarity against

@@ -82,7 +82,8 @@ graph TD;
     __end__([__end__]):::last
     __start__ --> guard;
     guard -. blocked .-> redact;
-    guard -. allowed .-> retrieve;
+    guard -. analysis .-> retrieve;
+    guard -. report op / small talk .-> llm;
     retrieve --> llm;
     llm -. tool_calls .-> tools;
     llm -. over budget .-> budget;
@@ -97,8 +98,8 @@ graph TD;
 
 | Node | Responsibility | Model |
 |---|---|---|
-| `guard` | Scope + prompt-injection screen. Fails **open** — see §3. | fast path, structured output |
-| `retrieve` | Hybrid search of the Golden Bucket for the current question | Embedding + lexical |
+| `guard` | Scope + prompt-injection screen, and the intent decision that gates retrieval. Fails **open** — see §3. | fast path, structured output |
+| `retrieve` | Hybrid search of the Golden Bucket for the current question. Reached only when the guard marks the turn as analysis, so a delete or a greeting costs no embedding call. | Embedding + lexical |
 | `llm` | Plan, choose tools, write SQL, narrate the answer | deep path |
 | `tools` | `describe_data`, `search_precedents`, `query_data`, `create_chart`, `save_report`, `delete_reports`, `undo_delete`, `remember_preference` | `delete_reports` calls `interrupt()` between resolving and acting |
 | `budget` | Hard stop. Answers pending tool calls, unbinds tools, forces a final answer | — |
