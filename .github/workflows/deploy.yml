@@ -1,0 +1,52 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+
+env:
+  REGION: us-central1
+  SERVICE: retail-analytics-assistant
+  REPO: apps
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Ensure the image repository exists
+        run: |
+          gcloud artifacts repositories describe "$REPO" --location "$REGION" \
+            || gcloud artifacts repositories create "$REPO" \
+                 --repository-format docker --location "$REGION"
+
+      - name: Build and push
+        run: |
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          IMAGE="$REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/$REPO/$SERVICE:${{ github.sha }}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --image "$IMAGE" \
+            --region "$REGION" \
+            --service-account "${{ secrets.GCP_RUNTIME_SA }}" \
+            --allow-unauthenticated \
+            --set-env-vars "GCP_PROJECT=${{ secrets.GCP_PROJECT }},APP_USER=${{ vars.APP_USER || 'alex' }}" \
+            --set-secrets "OPENROUTER_API_KEY=openrouter-api-key:latest,GOOGLE_API_KEY=google-api-key:latest,PII_SALT=pii-salt:latest,APP_PASSWORD=app-password:latest,SESSION_SECRET=session-secret:latest" \
+            --memory 1Gi --cpu 1 --timeout 900 --max-instances 3 --min-instances 0
+
+      - run: gcloud run services describe "$SERVICE" --region "$REGION" --format 'value(status.url)' >> "$GITHUB_STEP_SUMMARY"

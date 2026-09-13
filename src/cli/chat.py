@@ -112,9 +112,9 @@ def run(user: str = "manager_a") -> None:
                             for message in node_payload.get("messages", []) or []:
                                 for call in getattr(message, "tool_calls", None) or []:
                                     status.update(f"[dim]{call['name']}[/dim]")
-                                    console.print(f"  → {call['name']} {_brief(call['args'])}", style="dim", markup=False)
+                                    console.print(f"  → {call['name']} {brief(call['args'])}", style="dim", markup=False)
                                 if message.type == "tool":
-                                    console.print(f"  ← {_outcome(str(message.text))}", style="dim", markup=False)
+                                    console.print(f"  ← {outcome(str(message.text))}", style="dim", markup=False)
                 except Exception as exc:
                     console.print(f"[red]The assistant hit an unrecoverable error:[/red] {exc}")
                     console.print(f"[dim]trace {last_trace}[/dim]")
@@ -175,11 +175,11 @@ def _confirm(console: Console, request: dict) -> str:
     return answer
 
 
-def _brief(args: dict) -> str:
+def brief(args: dict) -> str:
     return json.dumps(args, default=str)[:110].replace("\n", " ")
 
 
-def _outcome(payload: str) -> str:
+def outcome(payload: str) -> str:
     if hits := re.findall(r"### Precedent: (\S+) \(similarity ([\d.]+)\)", payload):
         return ", ".join(f"{name} ({score})" for name, score in hits)
     try:

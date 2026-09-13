@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     row_limit: int = 500
     query_timeout_s: int = 120
 
+    app_user: str = "alex"
+    app_password: str = ""
+    session_secret: str = ""
+
     max_sql_repairs: int = 3
     max_steps: int = 12
     golden_top_k: int = 3

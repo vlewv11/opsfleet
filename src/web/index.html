@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retail Analytics Assistant</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/14.1.3/marked.min.js"></script>
+<style>
+  :root { --line: #e2e2e7; --dim: #8a8a94; --ink: #1d1d20; --bg: #fbfbfd; --accent: #2f6feb; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         color: var(--ink); background: var(--bg); display: flex; flex-direction: column; height: 100vh; }
+  header { display: flex; gap: 12px; align-items: center; padding: 10px 16px;
+           border-bottom: 1px solid var(--line); background: #fff; flex-wrap: wrap; }
+  header b { margin-right: auto; }
+  input, button { font: inherit; border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; background: #fff; }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  #log { flex: 1; overflow-y: auto; padding: 20px 16px; }
+  .turn { max-width: 820px; margin: 0 auto 22px; }
+  .who { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); margin-bottom: 5px; }
+  .me .bubble { background: #eef3ff; border: 1px solid #d7e3ff; border-radius: 10px; padding: 9px 12px; }
+  .note { color: var(--dim); font-size: 13px; }
+  .act { font: 12px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--dim); white-space: pre-wrap; }
+  .bubble table { border-collapse: collapse; margin: 10px 0; font-size: 14px; }
+  .bubble th, .bubble td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; }
+  .bubble pre { background: #f3f3f6; padding: 10px; border-radius: 7px; overflow-x: auto; }
+  .bubble h1, .bubble h2, .bubble h3 { font-size: 1.05em; margin: 14px 0 6px; }
+  .err { color: #b3261e; }
+  #out { border: 0; background: none; color: var(--dim); font-size: 13px; padding: 0; }
+  .confirm { border: 1px solid #e2b341; background: #fff9e9; border-radius: 9px; padding: 12px; }
+  .confirm ul { margin: 8px 0; padding-left: 18px; }
+  footer { border-top: 1px solid var(--line); background: #fff; padding: 10px 16px; }
+  .row { max-width: 820px; margin: 0 auto; display: flex; gap: 8px; }
+  #ask { flex: 1; }
+  #send { min-width: 78px; }
+</style>
+</head>
+<body>
+<header>
+  <b>Retail Analytics Assistant</b>
+  <button id="out" hidden>sign out</button>
+  <button id="demo">▶ Run demo</button>
+</header>
+
+<div id="log"></div>
+
+<footer>
+  <div class="row">
+    <input id="ask" placeholder="Ask about sales, customers, products or inventory…" autofocus>
+    <button id="send">Send</button>
+  </div>
+</footer>
+
+<script>
+const log = document.getElementById("log"), ask = document.getElementById("ask");
+const demoBtn = document.getElementById("demo"), sendBtn = document.getElementById("send");
+let user = "manager_a", thread = crypto.randomUUID().slice(0, 8), script = [];
+let busy = false, stopped = false, inflight = null;
+
+const scroll = () => log.scrollTop = log.scrollHeight;
+
+function turn(cls, who) {
+  const el = document.createElement("div");
+  el.className = "turn " + cls;
+  el.innerHTML = who ? `<div class="who">${who}</div>` : "";
+  log.appendChild(el); scroll();
+  return el;
+}
+
+function note(text) { line(turn("", ""), "note", text); }
+
+function line(el, cls, text) {
+  const row = document.createElement("div");
+  row.className = cls; row.textContent = text;
+  el.appendChild(row); scroll();
+  return row;
+}
+
+async function send(body) {
+  setBusy(true);
+  inflight = new AbortController();
+  const el = turn("", "assistant");
+  const thinking = line(el, "act", "thinking…");
+  try {
+    const response = await fetch("/chat", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({thread, ...body}), signal: inflight.signal,
+    });
+    if (response.status === 401) return location.replace("/login");
+    const reader = response.body.getReader(), decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream: true});
+      const parts = buffer.split("\n\n"); buffer = parts.pop();
+      for (const part of parts) {
+        if (!part.startsWith("data: ")) continue;
+        const event = JSON.parse(part.slice(6));
+        thinking.remove();
+        if (event.kind === "call") line(el, "act", "→ " + event.text);
+        else if (event.kind === "result") line(el, "act", "← " + event.text);
+        else if (event.kind === "error") line(el, "act err", "✗ " + event.text + "  ·  trace " + (event.trace || "-"));
+        else if (event.kind === "confirm") askConfirm(el, event.reports);
+        else if (event.kind === "answer") {
+          const bubble = document.createElement("div");
+          bubble.className = "bubble"; bubble.innerHTML = marked.parse(event.text);
+          el.appendChild(bubble);
+          line(el, "act", "trace " + event.trace);
+        }
+        scroll();
+      }
+    }
+  } catch (failure) {
+    if (failure.name !== "AbortError") throw failure;
+    thinking.remove();
+    const repaired = await fetch("/stop", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({thread}),
+    }).then(r => r.json()).catch(() => ({answered: 0}));
+    line(el, "act", repaired.answered
+      ? `■ stopped — ${repaired.answered} unfinished tool call(s) closed off, the conversation still works`
+      : "■ stopped");
+  } finally {
+    inflight = null;
+    setBusy(false);
+  }
+}
+
+function setBusy(on) {
+  busy = on;
+  sendBtn.textContent = on ? "■ Stop" : "Send";
+  demoBtn.disabled = on;
+}
+
+function stop() {
+  stopped = true;
+  inflight?.abort();
+}
+
+function askConfirm(el, reports) {
+  const box = document.createElement("div");
+  box.className = "confirm";
+  box.innerHTML = `<b>Confirm deletion of ${reports.length} report(s)</b><ul>` +
+    reports.map(r => `<li>${r.id} — ${r.title}<div class="note">${r.preview}</div></li>`).join("") + "</ul>";
+  const yes = document.createElement("button"), no = document.createElement("button");
+  yes.textContent = "Delete them"; no.textContent = "Cancel";
+  const answer = (word) => { box.remove(); send({resume: word}); };
+  yes.onclick = () => answer("yes"); no.onclick = () => answer("no");
+  box.append(yes, " ", no);
+  el.appendChild(box); scroll();
+}
+
+function submit(text) {
+  if (!text || busy) return;
+  const bubble = document.createElement("div");
+  bubble.className = "bubble"; bubble.textContent = text;
+  turn("me", user).appendChild(bubble);
+  ask.value = "";
+  return send({message: text});
+}
+
+sendBtn.onclick = () => busy ? stop() : submit(ask.value.trim());
+ask.onkeydown = (e) => { if (e.key === "Enter") submit(ask.value.trim()); };
+
+demoBtn.onclick = async () => {
+  stopped = false;
+  for (const step of script) {
+    if (stopped) { note("Demo stopped."); break; }
+    if (step.startsWith("/")) {
+      note(step.startsWith("/user ")
+        ? `Skipped ${step} — who you are comes from your sign-in now, not from the page.`
+        : `Skipped CLI command ${step} — not part of the web UI.`);
+    } else {
+      await submit(step);
+    }
+  }
+};
+
+const out = document.getElementById("out");
+
+(async function start() {
+  const who = await fetch("/me");
+  if (who.status === 401) return location.replace("/login");
+  const info = await who.json();
+  out.hidden = !info.login_required;
+  user = info.user;
+  script = await fetch("/demo").then(r => r.json()).then(d => d.demo);
+  ask.focus();
+})();
+
+out.onclick = async () => { await fetch("/logout", {method: "POST"}); location.replace("/login"); };
+</script>
+</body>
+</html>

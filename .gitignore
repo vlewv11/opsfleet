@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .env
 data/checkpoints.db
+data/checkpoints.db-*
 data/reports/*.json
 data/charts/*.png
 data/knowledge_base/.index.npz
